@@ -1,36 +1,67 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 🏥 Sistema de Inventario de Laboratorio
 
-## Getting Started
+Sistema moderno de gestión de inventario para laboratorios médicos desarrollado con Next.js 14 y Supabase.
 
-First, run the development server:
+## 🚀 Características Principales
 
+### 📦 Gestión de Inventario
+- **Multi-disciplina**: 8 disciplinas especializadas
+- **Control de lotes**: Seguimiento por número de lote
+- **Stock automático**: Consolidación automática de inventario
+- **Alertas inteligentes**: Stock bajo y vencimientos próximos
+
+### 📊 Funcionalidades
+- **Dashboard interactivo**: Estadísticas en tiempo real
+- **Recepción de productos**: Registro consolidado automático
+- **Control de consumos**: Registro con verificación de stock
+- **Reportes avanzados**: Exportación a Excel
+- **Notificaciones**: Alertas por email integradas
+
+### 🔒 Seguridad y Confiabilidad
+- **Autenticación segura**: Integración con Supabase Auth
+- **Base de datos PostgreSQL**: Esquema relacional optimizado
+- **API RESTful**: Endpoints protegidos
+- **Backups automáticos**: Funcionalidades de respaldo
+
+## 🛠️ Tecnologías Utilizadas
+
+- **Frontend**: Next.js 14, TypeScript, Tailwind CSS
+- **Backend**: Supabase (PostgreSQL, Auth, Storage)
+- **UI Components**: Shadcn/ui, Radix UI
+- **Gráficos**: Recharts
+- **Formularios**: React Hook Form + Zod
+- **Utilidades**: Date-fns, Lucide Icons
+
+## 📦 Instalación y Configuración
+
+### 1. Prerrequisitos
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+Node.js 18+ 
+npm o yarn
+Cuenta de Supabase
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### 2. Clonar repositorio
+```bash
+git clone https://github.com/tu-usuario/inventario-laboratorio.git
+cd inventario-laboratorio
+```
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### 3. Instalar dependencias
+```bash
+npm install
+# o
+yarn install
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### 4. Configurar variables de entorno
 
-## Learn More
+cp .env.example .env.local
 
-To learn more about Next.js, take a look at the following resources:
+Editar `.env.local`:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```
+NEXT_PUBLIC_SUPABASE_URL=tu_url_supabase
+NEXT_PUBLIC_SUPABASE_ANON_KEY=tu_anon_key
+SUPABASE_SERVICE_ROLE_KEY=tu_service_role_key
+```
