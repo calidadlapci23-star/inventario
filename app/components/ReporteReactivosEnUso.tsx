@@ -1,3 +1,4 @@
+// /app/inventario/reactivos/ReporteReactivosEnUso.tsx
 'use client';
 
 import { useState, useEffect } from 'react';
@@ -348,18 +349,7 @@ const ReporteReactivosEnUso = () => {
   // Cambiar filtro de estado
   const handleEstadoChange = (estado: string) => {
     setFiltroEstado(estado);
-    
-    // Si cambiamos a mostrar todos, actualizar las listas de filtros
-    if (estado === 'todos') {
-      // Para mostrar todas las disciplinas
-      const todasDisciplinas = new Set(reactivosEnUso.map(r => r.disciplina));
-      // Para mostrar todos los usuarios
-      const todosUsuarios = new Set(reactivosEnUso.map(r => r.puestoEnUsoPor));
-    } else {
-      // Si volvemos a activos, usar solo datos de activos
-      const disciplinasActivas = new Set(reactivosActivos.map(r => r.disciplina));
-      const usuariosActivos = new Set(reactivosActivos.map(r => r.puestoEnUsoPor));
-    }
+    // Las listas de disciplinas y usuarios se recalculan automáticamente en la renderización
   };
 
   if (loading) {

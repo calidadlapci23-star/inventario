@@ -4,6 +4,7 @@ import { Package, AlertTriangle, Clock, TrendingUp } from 'lucide-react';
 import DashboardCard from '@/app/components/DashboardCard';
 import AlertCard from '@/app/components/AlertCard';
 import QuickAction from '@/app/components/QuickAction';
+import RecepcionOrdenesCompra from '@/app/components/RecepcionOrdenesCompra';
 
 export default function DashboardPage() {
   // Datos de ejemplo (en una app real vendrían de una API)
@@ -17,12 +18,12 @@ export default function DashboardPage() {
   const alertasRecientes = [
     {
       tipo: 'stock-bajo' as const,
-      titulo: 'Stock Bajo - Glucosa',
+      titulo: 'Stock Bajo',
       descripcion: 'Quedan 5 pruebas disponibles',
     },
     {
       tipo: 'vencimiento' as const,
-      titulo: 'Vencimiento Próximo - TSH',
+      titulo: 'Vencimiento Próximo',
       descripcion: 'Vence en 15 días',
     },
     {
@@ -116,6 +117,13 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+      
+      {/* Nueva sección para RecepcionOrdenesCompra */}
+      <div className="bg-white rounded-xl shadow-md p-6 mt-6">
+        <h2 className="text-xl font-semibold text-gray-800 mb-4">Recepción de Órdenes de Compra</h2>
+        <RecepcionOrdenesCompra />
+      </div>
+
     </div>
   );
 }

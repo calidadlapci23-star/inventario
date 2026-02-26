@@ -1,8 +1,8 @@
-// firebase-config.js o firebase.js
+// /lib/firebase.ts
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 
-// Tu configuración de Firebase
+// Configuración de Firebase
 const firebaseConfig = {
   apiKey: "AIzaSyDlyMrsYBVIlKIQaSJFea1NclEZ7Q2vz9s",
   authDomain: "inventario-de-laboratori-11feb.firebaseapp.com",
@@ -15,7 +15,5 @@ const firebaseConfig = {
 // Inicializar Firebase
 const app = initializeApp(firebaseConfig);
 
-// Inicializar Firestore
-const db = getFirestore(app);
-
-export { app, db };
+// Exportar Firestore
+export const db = getFirestore(app);

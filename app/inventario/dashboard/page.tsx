@@ -11,7 +11,7 @@ import {
   orderBy,
   limit
 } from 'firebase/firestore';
-import { Package, Clock, TrendingUp, AlertTriangle, Activity } from 'lucide-react';
+import { Package, Clock, TrendingUp, AlertTriangle, Activity, FlaskConical, ArrowRight } from 'lucide-react';
 import Image from 'next/image';
 import Link from 'next/link';
 
@@ -21,9 +21,10 @@ export default function DashboardInventarioPage() {
     productos: 0,
     porVencer: 0,
     movimientosHoy: 0,
-    stockBajo: 0,
   });
   const [alertas, setAlertas] = useState<Array<{tipo: string, titulo: string, descripcion: string, link?: string}>>([]);
+  const [stockBajoCount, setStockBajoCount] = useState(0);
+  const [suministrosCount, setSuministrosCount] = useState(0); // Para la tarjeta de suministros
 
   const accionesRapidas = [
     {
@@ -44,18 +45,8 @@ export default function DashboardInventarioPage() {
       href: '/inventario/reportes/reportes',
       icon: '📊',
     },
-    {
-      id: 4,
-      titulo: 'Reactivos en Uso',
-      href: '/inventario/reactivos',
-      icon: '🔬',
-    },
-    {
-      id: 5,
-      titulo: 'Gestión de Suministros',
-      href: '/inventario/Gestion de Suministro',
-      icon: '🚚',
-    },
+    // Se eliminó "Reactivos en Uso"
+    // Se mantiene "Gestión de Suministros" pero ahora se mostrará en una tarjeta especial
   ];
 
   useEffect(() => {
@@ -68,21 +59,21 @@ export default function DashboardInventarioPage() {
         const productosSnapshot = await getDocs(productosRef);
         const totalProductos = productosSnapshot.size;
 
-        // 2. Contar productos con stock bajo (menor o igual a alerta_minima)
-        let stockBajoCount = 0;
+        // 2. Contar productos con stock bajo (para alerta)
+        let stockBajo = 0;
         productosSnapshot.forEach(doc => {
           const data = doc.data();
           const stock = data.stock_actual || 0;
           const alerta = data.alerta_minima || 10;
-          if (stock <= alerta) stockBajoCount++;
+          if (stock <= alerta) stockBajo++;
         });
+        setStockBajoCount(stockBajo);
 
         // 3. Productos por vencer (próximos 30 días)
         const hoy = new Date();
         const dentro30Dias = new Date();
         dentro30Dias.setDate(hoy.getDate() + 30);
 
-        // Consultar lotes con fecha de vencimiento en los próximos 30 días y que no estén cerrados
         const lotesRef = collection(db, 'lotes');
         const lotesQuery = query(
           lotesRef,
@@ -112,17 +103,30 @@ export default function DashboardInventarioPage() {
           productos: totalProductos,
           porVencer,
           movimientosHoy,
-          stockBajo: stockBajoCount,
         });
 
-        // 5. Construir alertas dinámicas
+        // 5. Contar suministros (por ejemplo, productos con categoría "suministro")
+        // Ajusta según tu estructura real. Si no existe, se puede omitir o usar 0.
+        try {
+          const suministrosQuery = query(
+            productosRef,
+            where('categoria', '==', 'suministro') // Ejemplo: categoría = 'suministro'
+          );
+          const suministrosSnapshot = await getDocs(suministrosQuery);
+          setSuministrosCount(suministrosSnapshot.size);
+        } catch (e) {
+          // Si no existe el campo categoría, simplemente no se muestra
+          setSuministrosCount(0);
+        }
+
+        // 6. Construir alertas dinámicas
         const nuevasAlertas = [];
 
-        if (stockBajoCount > 0) {
+        if (stockBajo > 0) {
           nuevasAlertas.push({
             tipo: 'stock',
             titulo: 'Stock Bajo',
-            descripcion: `${stockBajoCount} producto(s) tienen stock bajo y requieren atención.`,
+            descripcion: `${stockBajo} producto(s) tienen stock bajo y requieren atención.`,
             link: '/inventario/productos?filtro=stockBajo'
           });
         }
@@ -136,31 +140,12 @@ export default function DashboardInventarioPage() {
           });
         }
 
-        // Reactivos activos (si tienes colección)
-        const reactivosRef = collection(db, 'reactivos_en_uso');
-        const reactivosQuery = query(reactivosRef, where('estado', '==', 'activo'));
-        const reactivosSnapshot = await getDocs(reactivosQuery);
-        const activos = reactivosSnapshot.size;
-        if (activos > 0) {
-          nuevasAlertas.push({
-            tipo: 'info',
-            titulo: 'Reactivos en Uso',
-            descripcion: `${activos} reactivo(s) están actualmente en uso.`,
-            link: '/inventario/reactivos'
-          });
-        }
-
         setAlertas(nuevasAlertas);
 
       } catch (error) {
         console.error('Error cargando datos del dashboard:', error);
-        // Si hay error, mostrar datos vacíos con mensaje
-        setDashboardStats({
-          productos: 0,
-          porVencer: 0,
-          movimientosHoy: 0,
-          stockBajo: 0,
-        });
+        setDashboardStats({ productos: 0, porVencer: 0, movimientosHoy: 0 });
+        setStockBajoCount(0);
         setAlertas([{
           tipo: 'error',
           titulo: 'Error de conexión',
@@ -187,7 +172,7 @@ export default function DashboardInventarioPage() {
 
   return (
     <div className="space-y-8 p-4 md:p-8 bg-gray-50/50 min-h-screen">
-      {/* Logo en la parte superior */}
+      {/* Logo */}
       <div className="flex justify-start mb-4">
         <div className="relative w-[32rem] h-[16rem]">
           <Image
@@ -205,8 +190,8 @@ export default function DashboardInventarioPage() {
         <p className="text-gray-600 mt-2 text-lg">Resumen del estado actual del inventario del laboratorio.</p>
       </div>
 
-      {/* Estadísticas principales */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+      {/* Estadísticas principales (3 cards) */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="bg-white rounded-xl shadow-md p-6">
           <div className="flex items-center justify-between">
             <div>
@@ -242,22 +227,36 @@ export default function DashboardInventarioPage() {
             </div>
           </div>
         </div>
+      </div>
 
-        <div className="bg-white rounded-xl shadow-md p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium text-gray-600">Stock Bajo</p>
-              <p className="text-4xl font-bold text-gray-900 mt-2">{dashboardStats.stockBajo}</p>
+      {/* Tarjeta destacada para Gestión de Suministros */}
+      <div className="bg-gradient-to-r from-blue-500 to-indigo-600 rounded-2xl shadow-xl p-8 text-white">
+        <div className="flex flex-col md:flex-row items-center justify-between gap-6">
+          <div className="flex items-center gap-4">
+            <div className="p-4 bg-white/20 rounded-2xl">
+              <FlaskConical className="w-12 h-12" />
             </div>
-            <div className="p-3 bg-amber-100 rounded-lg">
-              <AlertTriangle className="h-8 w-8 text-amber-600" />
+            <div>
+              <h2 className="text-3xl font-bold">Gestión de Suministros</h2>
+              <p className="text-white/90 text-lg mt-1">
+                {suministrosCount > 0 
+                  ? `${suministrosCount} suministros activos en inventario` 
+                  : 'Accede al módulo de gestión de suministros'}
+              </p>
             </div>
           </div>
+          <Link
+            href="/inventario/GestionSuministro"
+            className="group flex items-center gap-3 bg-white text-blue-600 px-8 py-4 rounded-xl font-semibold text-lg shadow-lg hover:shadow-xl transition-all hover:scale-105"
+          >
+            <span>Ir a Gestión de Suministros</span>
+            <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+          </Link>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Acciones Rápidas */}
+        {/* Acciones Rápidas (solo 3 acciones) */}
         <div className="bg-white rounded-xl shadow-md p-6">
           <h2 className="text-xl font-semibold text-gray-800 mb-4">Acciones Rápidas</h2>
           <div className="space-y-3">
