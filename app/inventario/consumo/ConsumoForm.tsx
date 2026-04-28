@@ -502,7 +502,7 @@ export default function ConsumoForm() {
         }
       } else {
         toast.dismiss(loadingToast);
-        toast('No hay recepciones recientes (últimas 24 horas)'); // toast simple
+        toast('No hay recepciones recientes (últimas 24 horas)');
       }
       
       // 3. Recargar productos
@@ -516,7 +516,7 @@ export default function ConsumoForm() {
     }
   };
 
-  // Función para cargar productos con sus lotes activos (ACTUALIZADA)
+  // Función para cargar productos con sus lotes activos (CORREGIDA: ignora campo 'id' interno)
   const cargarProductosConLotes = useCallback(async () => {
     if (!disciplina) {
       setProductos([]);
@@ -534,10 +534,18 @@ export default function ConsumoForm() {
       );
       
       const querySnapshot = await getDocs(q);
-      const productosData = querySnapshot.docs.map(doc => ({ 
-        id: doc.id, 
-        ...doc.data() 
-      })) as Producto[];
+      
+      // Mapear documentos descartando cualquier campo 'id' que pudiera venir en los datos
+      const productosData: Producto[] = querySnapshot.docs.map(doc => {
+        const data = doc.data();
+        // Extraer el campo 'id' si existe para que no sobrescriba el doc.id
+        const { id: _, ...dataSinId } = data;
+        return {
+          id: doc.id,           // ← Usamos SIEMPRE el ID del documento
+          ...dataSinId,         // ← El resto de los campos (sin el id interno)
+          stock_actual: data.stock_actual ?? 0,
+        } as Producto;
+      });
       
       // Para cada producto, buscar su lote activo MÁS RECIENTE
       const productosConLotes = await Promise.all(
@@ -558,10 +566,8 @@ export default function ConsumoForm() {
               const loteDoc = lotesActivosSnapshot.docs[0];
               const loteData = loteDoc.data();
               
-              // VERIFICAR SI EL LOTE TIENE STOCK SUFICIENTE
               const cantidadActual = loteData.cantidad_actual || 0;
               
-              // Si el lote tiene stock, usarlo
               if (cantidadActual > 0) {
                 return {
                   ...producto,
@@ -579,7 +585,7 @@ export default function ConsumoForm() {
               where('producto_id', '==', producto.id),
               where('estado', '==', 'DISPONIBLE'),
               where('cantidad_actual', '>', 0),
-              orderBy('fecha_vencimiento', 'asc'), // Priorizar los que vencen primero
+              orderBy('fecha_vencimiento', 'asc'),
               limit(1)
             );
             
@@ -635,8 +641,6 @@ export default function ConsumoForm() {
         const stockActual = producto.stock_actual || 0;
         const cantidadLote = (producto as any).cantidad_actual_lote || 0;
         
-        // Usar el stock real del producto (que incluye recepciones recientes)
-        // Si hay lote específico, usar la cantidad del lote
         const stockDisponible = cantidadLote > 0 ? Math.min(stockActual, cantidadLote) : stockActual;
         
         return {
@@ -659,7 +663,7 @@ export default function ConsumoForm() {
           requiereNuevoLote: false,
           datosCierreGuardados: false,
           datosConfirmados: false,
-          loteCerrado: '', // Inicializar como string vacío para evitar undefined
+          loteCerrado: '',
           responsableCierre: '',
           responsableApertura: '',
           observacionesCierreApertura: ''
@@ -668,10 +672,9 @@ export default function ConsumoForm() {
       
       setRegistrosBase(nuevosRegistros);
       
-      // Mostrar notificación si hay productos sin lote
       const productosSinLote = productosConLotes.filter(p => !(p as any).loteId).length;
       if (productosSinLote > 0) {
-        toast.success(`${productosSinLote} productos no tienen lote activo. Use "Sincronizar Recepciones".`); // Cambiado a toast.success
+        toast.success(`${productosSinLote} productos no tienen lote activo. Use "Sincronizar Recepciones".`);
       }
       
     } catch (error) {
@@ -724,18 +727,17 @@ export default function ConsumoForm() {
     }));
   }, []);
 
-  // Buscar próximo lote disponible (lotes recibidos o disponibles con stock) - ACTUALIZADA
+  // Buscar próximo lote disponible
   const buscarProximoLote = async (productoId: string) => {
     try {
       const lotesRef = collection(db, 'lotes');
       
-      // Primero buscar lotes DISPONIBLES (de recepciones recientes)
       const qDisponibles = query(
         lotesRef,
         where('producto_id', '==', productoId),
         where('estado', '==', 'DISPONIBLE'),
         where('cantidad_actual', '>', 0),
-        orderBy('fecha_vencimiento', 'asc'), // Priorizar los que vencen primero
+        orderBy('fecha_vencimiento', 'asc'),
         limit(1)
       );
       
@@ -753,7 +755,6 @@ export default function ConsumoForm() {
         };
       }
       
-      // Si no hay DISPONIBLES, buscar RECIBIDOS
       const qRecibidos = query(
         lotesRef,
         where('producto_id', '==', productoId),
@@ -777,7 +778,6 @@ export default function ConsumoForm() {
         };
       }
       
-      // Si no hay lotes con estado específico, buscar cualquier lote con stock
       const qCualesquiera = query(
         lotesRef,
         where('producto_id', '==', productoId),
@@ -790,7 +790,6 @@ export default function ConsumoForm() {
       if (!cualesquieraSnapshot.empty) {
         const loteDoc = cualesquieraSnapshot.docs[0];
         const loteData = loteDoc.data();
-        // Verificar que no esté CERRADO
         if (loteData.estado !== 'CERRADO') {
           return {
             loteId: loteDoc.id,
@@ -803,13 +802,11 @@ export default function ConsumoForm() {
         }
       }
       
-      // Si no hay lotes, verificar si hay stock en el producto principal
       const productoRef = doc(db, 'productos', productoId);
       const productoSnap = await getDoc(productoRef);
       if (productoSnap.exists()) {
         const productoData = productoSnap.data();
         if (productoData.stock_actual > 0) {
-          // Crear un lote virtual con el stock total
           return {
             loteId: 'virtual',
             lote: 'STOCK-GENERAL',
@@ -824,7 +821,6 @@ export default function ConsumoForm() {
       return null;
     } catch (error: any) {
       console.error('Error buscando próximo lote:', error);
-      // Si el error es por índice compuesto, usar un método alternativo
       if (error.code === 'failed-precondition') {
         toast.error('Se necesita crear un índice compuesto en Firestore. Contacta al administrador.');
       }
@@ -832,7 +828,7 @@ export default function ConsumoForm() {
     }
   };
 
-  // Manejar cierre/apertura - CORREGIDO para evitar undefined
+  // Manejar cierre/apertura
   const handleCierreAperturaLote = useCallback((productoIndex: number, data: {
     responsableCierre: string;
     responsableApertura: string;
@@ -843,7 +839,7 @@ export default function ConsumoForm() {
       if (index === productoIndex) {
         return {
           ...registro,
-          loteCerrado: registro.loteActual || '', // Asegurar que no sea undefined
+          loteCerrado: registro.loteActual || '',
           responsableCierre: data.responsableCierre || '',
           responsableApertura: data.responsableApertura || '',
           observacionesCierreApertura: data.observaciones || '',
@@ -858,13 +854,12 @@ export default function ConsumoForm() {
     
     if (data.guardarDatos) {
       toast.success('Datos de cierre/apertura guardados y confirmados');
-      // Ahora permitir guardar el consumo
       toast('Ahora puede proceder a guardar el consumo', {
         icon: '✅',
         duration: 4000,
       });
     } else {
-      toast.error('Datos registrados pero no confirmados. Marque la casilla para proceder.'); // Cambiado a toast.error
+      toast.error('Datos registrados pero no confirmados. Marque la casilla para proceder.');
     }
   }, []);
 
@@ -916,13 +911,11 @@ export default function ConsumoForm() {
     );
     
     if (productosSinConfirmar.length > 0) {
-      // Mostrar alerta específica
       toast.error(
         `${productosSinConfirmar.length} producto(s) requieren confirmación de datos de cierre/apertura`,
         { duration: 5000 }
       );
       
-      // Resaltar visualmente los productos que necesitan confirmación
       productosSinConfirmar.forEach(registro => {
         const element = document.getElementById(`producto-${registro.productoId}`);
         if (element) {
@@ -939,7 +932,7 @@ export default function ConsumoForm() {
     return true;
   }, [registros]);
 
-  // Registrar consumos con gestión completa de lotes - CORREGIDO para evitar undefined
+  // Registrar consumos con gestión completa de lotes
   const handleRegistrarConsumos = async () => {
     const tieneConsumos = registros.some(registro => registro.totalConsumo > 0);
     
@@ -948,7 +941,6 @@ export default function ConsumoForm() {
       return;
     }
 
-    // Verificar confirmaciones antes de proceder
     if (!verificarConfirmacionesNecesarias()) {
       return;
     }
@@ -963,12 +955,22 @@ export default function ConsumoForm() {
       let lotesCerrados = 0;
       let lotesAbiertos = 0;
       
-      // Procesar cada registro individualmente
       for (const registro of registros) {
         if (registro.totalConsumo > 0) {
           const productoRef = doc(db, 'productos', registro.productoId);
-          
-          // Validar que el consumo no exceda el stock disponible
+
+          // Verificar que el producto aún existe en Firestore
+          const productoSnap = await getDoc(productoRef);
+          if (!productoSnap.exists()) {
+            toast.error(
+              `El producto "${registro.productoNombre}" ya no existe en la base de datos. Recargando lista...`
+            );
+            await cargarProductosConLotes();
+            setLoading(false);
+            toast.dismiss(loadingToast);
+            return;
+          }
+
           if (registro.totalConsumo > registro.stockActual) {
             toast.error(`El consumo (${registro.totalConsumo}) excede el stock disponible (${registro.stockActual}) para ${registro.productoNombre}`);
             setLoading(false);
@@ -976,7 +978,7 @@ export default function ConsumoForm() {
             return;
           }
           
-          // Actualizar producto (stock siempre se actualiza)
+          // Actualizar producto
           batch.update(productoRef, {
             stock_actual: registro.nuevoStock,
             updated_at: serverTimestamp(),
@@ -1010,7 +1012,6 @@ export default function ConsumoForm() {
                   updated_at: serverTimestamp(),
                 });
                 
-                // ACTIVAR NUEVO LOTE (si no es virtual)
                 if (proximoLote.loteId !== 'virtual') {
                   const proximoLoteRef = doc(db, 'lotes', proximoLote.loteId);
                   batch.update(proximoLoteRef, {
@@ -1023,7 +1024,6 @@ export default function ConsumoForm() {
                   lotesAbiertos++;
                 }
               } else {
-                // Si no hay próximo lote, dejar sin lote
                 batch.update(productoRef, {
                   lote_actual: '',
                   fecha_vencimiento_actual: '',
@@ -1035,7 +1035,6 @@ export default function ConsumoForm() {
                 });
               }
             } else {
-              // Solo actualizar cantidad del lote (no se agota)
               batch.update(loteActualRef, {
                 cantidad_actual: nuevaCantidadLote,
                 updated_at: serverTimestamp()
@@ -1043,10 +1042,9 @@ export default function ConsumoForm() {
             }
           }
           
-          // Crear movimiento de consumo - CORREGIDO para evitar undefined
+          // Crear movimiento de consumo
           const movimientoRef = doc(collection(db, 'movimientos'));
           
-          // Construir objeto de movimiento sin valores undefined
           const movimientoData: any = {
             id: movimientoRef.id,
             tipo: 'CONSUMO',
@@ -1073,25 +1071,11 @@ export default function ConsumoForm() {
             lote_actual: registro.loteActual || ''
           };
 
-          // Agregar datos de cierre/apertura solo si están disponibles
           if (registro.agotado && registro.datosConfirmados) {
-            // Solo agregar campos que no sean undefined o null
-            if (registro.loteCerrado && registro.loteCerrado.trim() !== '') {
-              movimientoData.lote_cerrado = registro.loteCerrado;
-            }
-            
-            if (registro.responsableCierre && registro.responsableCierre.trim() !== '') {
-              movimientoData.responsable_cierre = registro.responsableCierre;
-            }
-            
-            if (registro.responsableApertura && registro.responsableApertura.trim() !== '') {
-              movimientoData.responsable_apertura = registro.responsableApertura;
-            }
-            
-            if (registro.observacionesCierreApertura && registro.observacionesCierreApertura.trim() !== '') {
-              movimientoData.observaciones_lote = registro.observacionesCierreApertura;
-            }
-            
+            if (registro.loteCerrado?.trim()) movimientoData.lote_cerrado = registro.loteCerrado;
+            if (registro.responsableCierre?.trim()) movimientoData.responsable_cierre = registro.responsableCierre;
+            if (registro.responsableApertura?.trim()) movimientoData.responsable_apertura = registro.responsableApertura;
+            if (registro.observacionesCierreApertura?.trim()) movimientoData.observaciones_lote = registro.observacionesCierreApertura;
             movimientoData.datos_confirmados = true;
           }
 
@@ -1105,32 +1089,13 @@ export default function ConsumoForm() {
       toast.dismiss(loadingToast);
       
       let mensaje = `${productosProcesados} producto(s) procesado(s)`;
-      if (lotesCerrados > 0) {
-        mensaje += `, ${lotesCerrados} lote(s) cerrado(s)`;
-      }
-      if (lotesAbiertos > 0) {
-        mensaje += `, ${lotesAbiertos} lote(s) abierto(s)`;
-      }
+      if (lotesCerrados > 0) mensaje += `, ${lotesCerrados} lote(s) cerrado(s)`;
+      if (lotesAbiertos > 0) mensaje += `, ${lotesAbiertos} lote(s) abierto(s)`;
       
       toast.success(mensaje, { duration: 5000 });
       
-      // Actualizar datos locales inmediatamente
+      // Actualizar datos locales (esto recarga los productos y pone los consumos en cero)
       await actualizarDatosLocales();
-      
-      // Resetear solo los valores de consumo, mantener los responsables registrados
-      setRegistrosBase(prev => prev.map(registro => ({
-        ...registro,
-        px: 0,
-        control: 0,
-        calibrador: 0,
-        merma: 0,
-        totalConsumo: 0,
-        nuevoStock: registro.stockActual,
-        agotado: false,
-        requiereNuevoLote: false,
-        // Mantener los datos de cierre/apertura para referencia futura
-        // pero reiniciar los valores de consumo
-      })));
       
       setObservaciones('');
       

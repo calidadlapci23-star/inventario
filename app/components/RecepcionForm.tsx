@@ -1,4 +1,4 @@
-// /app/components/RecepcionForm.tsx
+// app/inventario/recepcion/page.tsx
 'use client';
 
 import { useState, useEffect } from 'react';
@@ -37,7 +37,7 @@ interface Producto {
   alerta_minima: number;
   precio_unitario?: number;
   ubicacion?: string;
-  pruebas_por_caja?: number; // Nuevo campo para almacenar el número de pruebas por caja
+  pruebas_por_caja?: number;
 }
 
 interface RegistroRecepcion {
@@ -48,7 +48,7 @@ interface RegistroRecepcion {
   unidad: string;
   stockActual: number;
   pruebas: number;
-  pruebasPorCaja?: number; // Número de pruebas que trae una caja (para referencia)
+  pruebasPorCaja?: number;
   numeroLote: string;
   fechaVencimiento: string;
   nuevoStock: number;
@@ -56,7 +56,7 @@ interface RegistroRecepcion {
   observacionesProducto?: string;
 }
 
-// Catálogo de productos por disciplina ACTUALIZADO con campo "# de Pruebas"
+// Catálogo de productos por disciplina
 const catalogoProductos = {
   'QUIMICA_CLINICA': [
     { nombre: 'FLUID PACKD', fabricante: 'DIAMOND DIAGNOSTIC', proveedor: 'Proveedor A', pruebas: 0 },
@@ -160,6 +160,19 @@ export default function RecepcionForm() {
   const [modo, setModo] = useState<'CREAR' | 'RECEPCION'>('CREAR');
   const [productosCatalogo, setProductosCatalogo] = useState<any[]>([]);
 
+  // ---------- FUNCIÓN DE SANITIZACIÓN ----------
+  const safeString = (value: any, defaultValue: string = ''): string => {
+    if (value === undefined || value === null) return defaultValue;
+    return String(value);
+  };
+
+  const safeNumber = (value: any, defaultValue: number = 0): number => {
+    if (value === undefined || value === null) return defaultValue;
+    const num = Number(value);
+    return isNaN(num) ? defaultValue : num;
+  };
+  // ---------------------------------------------
+
   // Cargar productos cuando cambia la disciplina
   useEffect(() => {
     const cargarDatos = async () => {
@@ -174,7 +187,6 @@ export default function RecepcionForm() {
       try {
         console.log('Cargando datos para disciplina:', disciplina);
         
-        // Cargar productos de Firebase
         const productosRef = collection(db, 'productos');
         const q = query(
           productosRef,
@@ -183,16 +195,21 @@ export default function RecepcionForm() {
         );
         
         const querySnapshot = await getDocs(q);
-        const productosData = querySnapshot.docs.map(doc => ({ 
-          id: doc.id, 
-          ...doc.data() 
-        })) as Producto[];
+        const productosData = querySnapshot.docs.map(doc => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            ...data,
+            stock_actual: safeNumber(data.stock_actual, 0),
+            pruebas_por_caja: safeNumber(data.pruebas_por_caja, 0),
+            codigo: safeString(data.codigo, ''),
+          } as Producto;
+        });
         
         console.log('Productos cargados de Firebase:', productosData.length);
         setProductos(productosData);
         
         if (productosData.length === 0) {
-          // No hay productos en Firebase, mostrar catálogo
           setModo('CREAR');
           const catalogo = catalogoProductos[disciplina as keyof typeof catalogoProductos] || [];
           setProductosCatalogo(catalogo.map((prod, index) => ({
@@ -201,35 +218,31 @@ export default function RecepcionForm() {
             codigo: `${disciplina.slice(0, 3).toUpperCase()}-${String(index + 1).padStart(3, '0')}`
           })));
         } else {
-          // Hay productos en Firebase, mostrar tabla de recepción
           setModo('RECEPCION');
-          
-          // Obtener el catálogo para esta disciplina para obtener el número de pruebas por caja
           const catalogo = catalogoProductos[disciplina as keyof typeof catalogoProductos] || [];
           
-          // Inicializar registros con los productos de Firebase
           const nuevosRegistros: RegistroRecepcion[] = productosData.map(producto => {
-            // Buscar el producto en el catálogo para obtener el número de pruebas por caja
             const productoCatalogo = catalogo.find(
               (p: any) => p.nombre === producto.nombre && p.fabricante === producto.fabricante
             );
-            
-            // Si no hay valor en el catálogo, verificar si ya existe en el producto
-            const pruebasPorCaja = productoCatalogo?.pruebas || producto.pruebas_por_caja || 0;
+            const pruebasPorCaja = safeNumber(
+              productoCatalogo?.pruebas ?? producto.pruebas_por_caja, 0
+            );
             
             return {
               productoId: producto.id,
-              productoNombre: producto.nombre,
-              codigoProducto: producto.codigo,
-              fabricante: producto.fabricante || '',
-              unidad: producto.unidad_medida,
+              productoNombre: safeString(producto.nombre),
+              // ⚠️ TRIPLE FALLBACK para código
+              codigoProducto: safeString(producto.codigo) || producto.id || 'SIN-CODIGO',
+              fabricante: safeString(producto.fabricante),
+              unidad: safeString(producto.unidad_medida),
               stockActual: producto.stock_actual,
-              pruebas: pruebasPorCaja > 0 ? pruebasPorCaja : 0, // Si hay pruebas por caja, establecer como valor por defecto
-              pruebasPorCaja: pruebasPorCaja, // Guardar el valor de referencia
+              pruebas: pruebasPorCaja,
+              pruebasPorCaja: pruebasPorCaja,
               numeroLote: '',
               fechaVencimiento: '',
               nuevoStock: producto.stock_actual,
-              proveedor: producto.proveedor || ''
+              proveedor: safeString(producto.proveedor)
             };
           });
           
@@ -252,26 +265,24 @@ export default function RecepcionForm() {
     setLoading(true);
     
     try {
-      // Buscar el producto en el catálogo para obtener el número de pruebas
       const catalogo = catalogoProductos[disciplina as keyof typeof catalogoProductos] || [];
       const productoCatalogo = catalogo.find(
         (p: any) => p.nombre === nombre && p.fabricante === fabricante
       );
-      const pruebasPorCaja = productoCatalogo?.pruebas || 0;
+      const pruebasPorCaja = safeNumber(productoCatalogo?.pruebas ?? pruebas, 0);
 
-      // Crear producto en Firebase
-      const nuevoProductoRef = doc(collection(db, 'productos'));
+      const codigo = `${disciplina.slice(0, 3).toUpperCase()}-${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
+
       await addDoc(collection(db, 'productos'), {
-        id: nuevoProductoRef.id,
-        nombre: nombre,
-        codigo: `${disciplina.slice(0, 3).toUpperCase()}-${Math.random().toString(36).substr(2, 6).toUpperCase()}`,
-        disciplina: disciplina,
+        nombre: safeString(nombre),
+        codigo: codigo,
+        disciplina: safeString(disciplina),
         categoria: 'Reactivo',
         unidad_medida: 'pruebas',
         stock_actual: 0,
-        proveedor: proveedor,
-        fabricante: fabricante,
-        pruebas_por_caja: pruebasPorCaja, // Guardar el número de pruebas por caja
+        proveedor: safeString(proveedor),
+        fabricante: safeString(fabricante),
+        pruebas_por_caja: pruebasPorCaja,
         alerta_minima: 10,
         created_at: serverTimestamp(),
         updated_at: serverTimestamp(),
@@ -288,39 +299,43 @@ export default function RecepcionForm() {
       );
       
       const querySnapshot = await getDocs(q);
-      const productosData = querySnapshot.docs.map(doc => ({ 
-        id: doc.id, 
-        ...doc.data() 
-      })) as Producto[];
+      const productosData = querySnapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          ...data,
+          stock_actual: safeNumber(data.stock_actual, 0),
+          pruebas_por_caja: safeNumber(data.pruebas_por_caja, 0),
+          codigo: safeString(data.codigo, ''),
+        } as Producto;
+      });
       
       setProductos(productosData);
-      
-      // Cambiar a modo recepción
       setModo('RECEPCION');
       
-      // Obtener catálogo para esta disciplina
       const catalogoForDiscipline = catalogoProductos[disciplina as keyof typeof catalogoProductos] || [];
       
-      // Actualizar registros
       const nuevosRegistros: RegistroRecepcion[] = productosData.map(producto => {
         const productoCatalogo = catalogoForDiscipline.find(
           (p: any) => p.nombre === producto.nombre && p.fabricante === producto.fabricante
         );
-        const pruebasPorCaja = productoCatalogo?.pruebas || producto.pruebas_por_caja || 0;
+        const pruebasPorCaja = safeNumber(
+          productoCatalogo?.pruebas ?? producto.pruebas_por_caja, 0
+        );
         
         return {
           productoId: producto.id,
-          productoNombre: producto.nombre,
-          codigoProducto: producto.codigo,
-          fabricante: producto.fabricante || '',
-          unidad: producto.unidad_medida,
+          productoNombre: safeString(producto.nombre),
+          codigoProducto: safeString(producto.codigo) || producto.id || 'SIN-CODIGO',
+          fabricante: safeString(producto.fabricante),
+          unidad: safeString(producto.unidad_medida),
           stockActual: producto.stock_actual,
-          pruebas: pruebasPorCaja > 0 ? pruebasPorCaja : 0, // Si hay pruebas por caja, establecer como valor por defecto
-          pruebasPorCaja: pruebasPorCaja, // Guardar el valor de referencia
+          pruebas: pruebasPorCaja,
+          pruebasPorCaja: pruebasPorCaja,
           numeroLote: '',
           fechaVencimiento: '',
           nuevoStock: producto.stock_actual,
-          proveedor: producto.proveedor || ''
+          proveedor: safeString(producto.proveedor)
         };
       });
       
@@ -354,25 +369,23 @@ export default function RecepcionForm() {
     }));
   };
 
-  // Aplicar el valor de "pruebasPorCaja" al campo "pruebas"
   const handleAplicarPruebasPorCaja = (productoId: string) => {
     setRegistros(prev => prev.map(registro => {
       if (registro.productoId === productoId && registro.pruebasPorCaja && registro.pruebasPorCaja > 0) {
         return { 
           ...registro, 
-          pruebas: registro.pruebasPorCaja 
+          pruebas: registro.pruebasPorCaja
         };
       }
       return registro;
     }));
   };
 
-  // Incrementar/decrementar valores
   const incrementValue = (productoId: string, campo: keyof RegistroRecepcion) => {
     setRegistros(prev => prev.map(registro => {
       if (registro.productoId === productoId) {
         if (campo === 'pruebas') {
-          const currentValue = registro[campo];
+          const currentValue = safeNumber(registro.pruebas, 0);
           return { ...registro, [campo]: currentValue + 1 };
         }
       }
@@ -384,7 +397,7 @@ export default function RecepcionForm() {
     setRegistros(prev => prev.map(registro => {
       if (registro.productoId === productoId) {
         if (campo === 'pruebas') {
-          const currentValue = registro[campo];
+          const currentValue = safeNumber(registro.pruebas, 0);
           if (currentValue > 0) {
             return { ...registro, [campo]: currentValue - 1 };
           }
@@ -396,10 +409,9 @@ export default function RecepcionForm() {
 
   // Registrar recepción
   const handleRegistrarRecepcion = async () => {
-    // Validar recepción
     const tieneRecepciones = registros.some(registro => 
-      registro.pruebas > 0 || 
-      registro.numeroLote.trim() !== ''
+      safeNumber(registro.pruebas, 0) > 0 || 
+      safeString(registro.numeroLote).trim() !== ''
     );
     
     if (!tieneRecepciones) {
@@ -414,65 +426,65 @@ export default function RecepcionForm() {
       const batch = writeBatch(db);
       const ahora = Timestamp.now();
       let productosActualizados = 0;
-      
-      // Para cada registro con recepción
+
+      // (Opcional) Log para depuración
+      console.log('Registros a procesar:', registros.map(r => ({
+        productoId: r.productoId,
+        productoNombre: r.productoNombre,
+        codigoProducto: r.codigoProducto,
+        tipo: typeof r.codigoProducto
+      })));
+
       registros.forEach(registro => {
-        const tieneDatos = registro.pruebas > 0 || registro.numeroLote.trim() !== '';
+        const tieneDatos = safeNumber(registro.pruebas, 0) > 0 || safeString(registro.numeroLote).trim() !== '';
         
         if (tieneDatos) {
-          // Actualizar producto
           const productoRef = doc(db, 'productos', registro.productoId);
+          const nuevoStockCalculado = safeNumber(registro.stockActual, 0) + safeNumber(registro.pruebas, 0);
           
-          // Calcular nuevo stock (se suma el número de pruebas)
-          const nuevoStockCalculado = registro.stockActual + registro.pruebas;
-          
-          // Crear objeto de actualización
           const updateData: any = {
             stock_actual: nuevoStockCalculado,
             updated_at: serverTimestamp(),
           };
           
-          // Actualizar lote si se proporcionó
-          if (registro.numeroLote.trim() !== '') {
-            updateData.lote = registro.numeroLote;
+          if (safeString(registro.numeroLote).trim() !== '') {
+            updateData.lote = safeString(registro.numeroLote);
           }
-          
-          // Actualizar fecha de vencimiento si se proporcionó
-          if (registro.fechaVencimiento.trim() !== '') {
-            updateData.fecha_vencimiento = registro.fechaVencimiento;
+          if (safeString(registro.fechaVencimiento).trim() !== '') {
+            updateData.fecha_vencimiento = safeString(registro.fechaVencimiento);
           }
-          
-          // Actualizar el campo pruebas_por_caja si existe un valor
-          if (registro.pruebasPorCaja && registro.pruebasPorCaja > 0) {
-            updateData.pruebas_por_caja = registro.pruebasPorCaja;
+          if (safeNumber(registro.pruebasPorCaja, 0) > 0) {
+            updateData.pruebas_por_caja = safeNumber(registro.pruebasPorCaja);
           }
           
           batch.update(productoRef, updateData);
           productosActualizados++;
-          
-          // Registrar movimiento de recepción
+
           const movimientoRef = doc(collection(db, 'movimientos'));
+          
+          // ---------- SANITIZACIÓN TOTAL ----------
           batch.set(movimientoRef, {
-            id: movimientoRef.id,
+            id: safeString(movimientoRef.id),
             tipo: 'RECEPCION',
-            producto_id: registro.productoId,
-            producto_nombre: registro.productoNombre,
-            codigo_producto: registro.codigoProducto,
-            disciplina: disciplina,
-            fabricante: registro.fabricante,
-            cantidad: registro.pruebas,
-            unidad: registro.unidad,
-            stock_anterior: registro.stockActual,
+            producto_id: safeString(registro.productoId),
+            producto_nombre: safeString(registro.productoNombre),
+            // ⚠️ ESTE ES EL CAMPO CRÍTICO
+            codigo_producto: safeString(registro.codigoProducto) || 'SIN-CODIGO',
+            disciplina: safeString(disciplina),
+            fabricante: safeString(registro.fabricante),
+            cantidad: safeNumber(registro.pruebas, 0),
+            unidad: safeString(registro.unidad),
+            stock_anterior: safeNumber(registro.stockActual, 0),
             stock_nuevo: nuevoStockCalculado,
-            numero_lote: registro.numeroLote || 'N/A',
-            fecha_vencimiento: registro.fechaVencimiento || 'N/A',
-            pruebas: registro.pruebas,
-            pruebas_por_caja: registro.pruebasPorCaja || 0,
-            orden_compra: ordenCompra.trim() || 'N/A',
-            factura: factura.trim() || 'N/A',
-            proveedor: registro.proveedor || 'N/A',
+            numero_lote: safeString(registro.numeroLote) || 'N/A',
+            fecha_vencimiento: safeString(registro.fechaVencimiento) || 'N/A',
+            pruebas: safeNumber(registro.pruebas, 0),
+            pruebas_por_caja: safeNumber(registro.pruebasPorCaja, 0),
+            orden_compra: safeString(ordenCompra).trim() || 'N/A',
+            factura: safeString(factura).trim() || 'N/A',
+            proveedor: safeString(registro.proveedor) || 'N/A',
             usuario: 'usuario_actual',
-            observaciones: observaciones.trim() || `Recepción registrada - ${fechaRecepcion}`,
+            observaciones: safeString(observaciones).trim() || `Recepción registrada - ${fechaRecepcion}`,
             created_at: serverTimestamp(),
             fecha: ahora,
             fecha_recepcion: new Date(fechaRecepcion)
@@ -485,7 +497,6 @@ export default function RecepcionForm() {
         toast.dismiss(loadingToast);
         toast.success(`Recepción registrada para ${productosActualizados} productos`, { duration: 5000 });
         
-        // Recargar datos
         setTimeout(() => {
           router.refresh();
           resetFormulario();
@@ -504,12 +515,11 @@ export default function RecepcionForm() {
     }
   };
 
-  // Resetear formulario
   const resetFormulario = () => {
     if (modo === 'RECEPCION') {
       setRegistros(prev => prev.map(registro => ({
         ...registro,
-        pruebas: registro.pruebasPorCaja || 0, // Restaurar al valor de pruebas por caja
+        pruebas: registro.pruebasPorCaja || 0,
         numeroLote: '',
         fechaVencimiento: '',
         nuevoStock: registro.stockActual
@@ -521,7 +531,6 @@ export default function RecepcionForm() {
     toast.success('Valores reiniciados (pruebas restauradas a valor por caja)');
   };
 
-  // Resetear todo
   const resetTodo = () => {
     setDisciplina('');
     setProductos([]);
@@ -538,16 +547,15 @@ export default function RecepcionForm() {
     toast.success('Formulario reiniciado completamente');
   };
 
-  // Calcular totales
   const calcularTotales = () => {
     return registros.reduce((totales, registro) => ({
-      pruebas: totales.pruebas + registro.pruebas,
-      productosConLote: totales.productosConLote + (registro.numeroLote.trim() ? 1 : 0),
+      pruebas: totales.pruebas + safeNumber(registro.pruebas, 0),
+      productosConLote: totales.productosConLote + (safeString(registro.numeroLote).trim() ? 1 : 0),
       productosConRecepcion: totales.productosConRecepcion + 
-        (registro.pruebas > 0 || registro.numeroLote.trim() !== '' ? 1 : 0),
-      stockTotalAnterior: totales.stockTotalAnterior + registro.stockActual,
-      stockTotalNuevo: totales.stockTotalNuevo + (registro.stockActual + registro.pruebas),
-      productosConPruebasPorCaja: totales.productosConPruebasPorCaja + (registro.pruebasPorCaja && registro.pruebasPorCaja > 0 ? 1 : 0)
+        (safeNumber(registro.pruebas, 0) > 0 || safeString(registro.numeroLote).trim() !== '' ? 1 : 0),
+      stockTotalAnterior: totales.stockTotalAnterior + safeNumber(registro.stockActual, 0),
+      stockTotalNuevo: totales.stockTotalNuevo + (safeNumber(registro.stockActual, 0) + safeNumber(registro.pruebas, 0)),
+      productosConPruebasPorCaja: totales.productosConPruebasPorCaja + (safeNumber(registro.pruebasPorCaja, 0) > 0 ? 1 : 0)
     }), { 
       pruebas: 0,
       productosConLote: 0,
@@ -560,36 +568,32 @@ export default function RecepcionForm() {
 
   const totales = calcularTotales();
 
-  // Filtrar productos del catálogo
   const productosCatalogoFiltrados = productosCatalogo.filter(producto =>
-    producto.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
-    producto.fabricante.toLowerCase().includes(busqueda.toLowerCase()) ||
-    producto.proveedor.toLowerCase().includes(busqueda.toLowerCase())
+    safeString(producto.nombre).toLowerCase().includes(busqueda.toLowerCase()) ||
+    safeString(producto.fabricante).toLowerCase().includes(busqueda.toLowerCase()) ||
+    safeString(producto.proveedor).toLowerCase().includes(busqueda.toLowerCase())
   );
 
-  // Filtrar registros de recepción
   const registrosFiltrados = registros.filter(registro => {
-    const matchBusqueda = registro.productoNombre.toLowerCase().includes(busqueda.toLowerCase()) ||
-                         registro.codigoProducto.toLowerCase().includes(busqueda.toLowerCase()) ||
-                         registro.fabricante.toLowerCase().includes(busqueda.toLowerCase());
+    const matchBusqueda = safeString(registro.productoNombre).toLowerCase().includes(busqueda.toLowerCase()) ||
+                         safeString(registro.codigoProducto).toLowerCase().includes(busqueda.toLowerCase()) ||
+                         safeString(registro.fabricante).toLowerCase().includes(busqueda.toLowerCase());
     
     const matchProveedor = !proveedorFiltro || 
-                          registro.proveedor?.toLowerCase().includes(proveedorFiltro.toLowerCase());
+                          safeString(registro.proveedor).toLowerCase().includes(proveedorFiltro.toLowerCase());
     
     const matchFabricante = !fabricanteFiltro || 
-                           registro.fabricante.toLowerCase().includes(fabricanteFiltro.toLowerCase());
+                           safeString(registro.fabricante).toLowerCase().includes(fabricanteFiltro.toLowerCase());
     
     return matchBusqueda && matchProveedor && matchFabricante;
   });
 
-  // Obtener fabricantes únicos para filtro
   const fabricantesUnicos = Array.from(new Set(
-    registros.filter(r => r.fabricante).map(r => r.fabricante)
+    registros.filter(r => safeString(r.fabricante)).map(r => safeString(r.fabricante))
   )).sort();
 
-  // Obtener proveedores únicos para filtro
   const proveedoresUnicos = Array.from(new Set(
-    registros.filter(r => r.proveedor).map(r => r.proveedor)
+    registros.filter(r => safeString(r.proveedor)).map(r => safeString(r.proveedor))
   )).sort();
 
   return (
@@ -670,7 +674,6 @@ export default function RecepcionForm() {
               </div>
             </div>
 
-            {/* Información de recepción */}
             {disciplina && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
@@ -702,7 +705,7 @@ export default function RecepcionForm() {
           </div>
         </div>
 
-        {/* Modo CREAR: Mostrar catálogo de productos */}
+        {/* Modo CREAR: catálogo */}
         {modo === 'CREAR' && disciplina && (
           <div className="bg-white rounded-2xl shadow-lg overflow-hidden mb-6">
             <div className="p-6 border-b">
@@ -785,7 +788,7 @@ export default function RecepcionForm() {
           </div>
         )}
 
-        {/* Modo RECEPCION: Tabla de productos para registrar recepción */}
+        {/* Modo RECEPCION: tabla */}
         {modo === 'RECEPCION' && disciplina && productos.length > 0 && (
           <>
             {/* Filtros */}
@@ -795,7 +798,6 @@ export default function RecepcionForm() {
                 Filtros de Búsqueda
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                {/* Búsqueda general */}
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
                   <input
@@ -806,8 +808,6 @@ export default function RecepcionForm() {
                     className="pl-10 pr-4 py-3 border-2 rounded-xl w-full focus:border-green-500"
                   />
                 </div>
-
-                {/* Filtro por fabricante */}
                 <div>
                   <select
                     value={fabricanteFiltro}
@@ -822,8 +822,6 @@ export default function RecepcionForm() {
                     ))}
                   </select>
                 </div>
-
-                {/* Filtro por proveedor */}
                 <div>
                   <select
                     value={proveedorFiltro}
@@ -838,7 +836,6 @@ export default function RecepcionForm() {
                     ))}
                   </select>
                 </div>
-
                 <button
                   onClick={() => setModo('CREAR')}
                   className="px-4 py-3 border border-green-500 text-green-500 rounded-xl hover:bg-green-50 transition-colors"
@@ -870,7 +867,6 @@ export default function RecepcionForm() {
                       </div>
                     )}
                   </div>
-                  
                   <div className="flex items-center gap-2">
                     <span className="text-sm text-gray-600">
                       Mostrando {registrosFiltrados.length} de {registros.length}
@@ -896,7 +892,6 @@ export default function RecepcionForm() {
                   <tbody>
                     {registrosFiltrados.map((registro) => (
                       <tr key={registro.productoId} className="border-b hover:bg-gray-50">
-                        {/* Producto */}
                         <td className="p-4 border-r">
                           <div className="font-medium text-gray-800">{registro.productoNombre}</div>
                           <div className="text-sm text-gray-500 flex items-center gap-1">
@@ -904,45 +899,29 @@ export default function RecepcionForm() {
                             {registro.codigoProducto}
                           </div>
                           {registro.proveedor && (
-                            <div className="text-xs text-gray-500 mt-1">
-                              Prov: {registro.proveedor}
-                            </div>
+                            <div className="text-xs text-gray-500 mt-1">Prov: {registro.proveedor}</div>
                           )}
                         </td>
-
-                        {/* Stock Actual */}
                         <td className="p-4 text-center border-r">
                           <div className={`text-xl font-bold ${
-                            registro.stockActual === 0 
-                              ? 'text-red-600' 
-                              : registro.stockActual <= 10
-                                ? 'text-amber-600' 
-                                : 'text-gray-800'
+                            registro.stockActual === 0 ? 'text-red-600' : registro.stockActual <= 10 ? 'text-amber-600' : 'text-gray-800'
                           }`}>
                             {registro.stockActual}
                           </div>
                           <div className="text-sm text-gray-500">{registro.unidad}</div>
                         </td>
-
-                        {/* Fabricante */}
                         <td className="p-4 text-center border-r">
                           <div className="flex items-center justify-center gap-1">
                             <Factory className="w-4 h-4 text-gray-400" />
                             <span className="text-gray-700">{registro.fabricante || 'N/A'}</span>
                           </div>
                         </td>
-
-                        {/* Pruebas por Caja */}
                         <td className="p-4 text-center border-r bg-blue-50/50">
                           <div className="flex flex-col items-center justify-center">
                             <div className={`text-lg font-bold ${
-                              registro.pruebasPorCaja && registro.pruebasPorCaja > 0 
-                                ? 'text-blue-600' 
-                                : 'text-gray-400'
+                              registro.pruebasPorCaja && registro.pruebasPorCaja > 0 ? 'text-blue-600' : 'text-gray-400'
                             }`}>
-                              {registro.pruebasPorCaja && registro.pruebasPorCaja > 0 
-                                ? registro.pruebasPorCaja 
-                                : 'N/A'}
+                              {registro.pruebasPorCaja && registro.pruebasPorCaja > 0 ? registro.pruebasPorCaja : 'N/A'}
                             </div>
                             {registro.pruebasPorCaja && registro.pruebasPorCaja > 0 && (
                               <button
@@ -954,8 +933,6 @@ export default function RecepcionForm() {
                             )}
                           </div>
                         </td>
-
-                        {/* # Pruebas */}
                         <td className="p-4 border-r bg-amber-50/50">
                           <div className="flex flex-col items-center">
                             <div className="flex items-center justify-center space-x-2 mb-1">
@@ -989,8 +966,6 @@ export default function RecepcionForm() {
                             )}
                           </div>
                         </td>
-
-                        {/* Número de Lote */}
                         <td className="p-4 border-r bg-purple-50/50">
                           <input
                             type="text"
@@ -1000,8 +975,6 @@ export default function RecepcionForm() {
                             className="w-full p-2 text-center border rounded-lg bg-white"
                           />
                         </td>
-
-                        {/* Fecha Vencimiento */}
                         <td className="p-4 border-r bg-red-50/50">
                           <input
                             type="date"
@@ -1010,38 +983,31 @@ export default function RecepcionForm() {
                             className="w-full p-2 text-center border rounded-lg bg-white"
                           />
                         </td>
-
-                        {/* Nuevo Stock */}
                         <td className="p-4 text-center bg-green-50/50">
                           <div className={`text-xl font-bold ${
-                            (registro.stockActual + registro.pruebas) > registro.stockActual
+                            ((registro.stockActual || 0) + (registro.pruebas || 0)) > (registro.stockActual || 0)
                               ? 'text-green-600' 
-                              : (registro.stockActual + registro.pruebas) === registro.stockActual
+                              : ((registro.stockActual || 0) + (registro.pruebas || 0)) === (registro.stockActual || 0)
                                 ? 'text-gray-800'
                                 : 'text-red-600'
                           }`}>
-                            {registro.stockActual + registro.pruebas}
+                            {(registro.stockActual || 0) + (registro.pruebas || 0)}
                           </div>
                           <div className="text-sm text-gray-500">{registro.unidad}</div>
-                          {registro.pruebas > 0 && (
+                          {(registro.pruebas || 0) > 0 && (
                             <div className="text-xs mt-1">
-                              <span className="text-green-500">
-                                ↑ +{registro.pruebas} pruebas
-                              </span>
+                              <span className="text-green-500">↑ +{registro.pruebas} pruebas</span>
                             </div>
                           )}
                         </td>
                       </tr>
                     ))}
                   </tbody>
-                  {/* Totales */}
                   <tfoot className="bg-gray-100">
                     <tr>
                       <td className="p-4 font-bold text-gray-800 border-r">TOTALES</td>
                       <td className="p-4 text-center border-r">
-                        <div className="text-xl font-bold text-gray-800">
-                          {totales.stockTotalAnterior}
-                        </div>
+                        <div className="text-xl font-bold text-gray-800">{totales.stockTotalAnterior}</div>
                       </td>
                       <td className="p-4 text-center border-r">-</td>
                       <td className="p-4 text-center border-r bg-blue-50">
@@ -1058,14 +1024,10 @@ export default function RecepcionForm() {
                       </td>
                       <td className="p-4 text-center border-r bg-red-50">-</td>
                       <td className="p-4 text-center bg-green-50">
-                        <div className="text-xl font-bold text-green-700">
-                          {totales.stockTotalNuevo}
-                        </div>
+                        <div className="text-xl font-bold text-green-700">{totales.stockTotalNuevo}</div>
                         <div className="text-xs text-gray-500">
                           {totales.stockTotalNuevo > totales.stockTotalAnterior ? (
-                            <span className="text-green-600">
-                              ↑ +{totales.stockTotalNuevo - totales.stockTotalAnterior}
-                            </span>
+                            <span className="text-green-600">↑ +{totales.stockTotalNuevo - totales.stockTotalAnterior}</span>
                           ) : 'Sin cambios'}
                         </div>
                       </td>
@@ -1079,7 +1041,6 @@ export default function RecepcionForm() {
 
         {/* Observaciones y acciones */}
         <div className="bg-white rounded-2xl shadow-lg p-6">
-          {/* Observaciones */}
           <div className="mb-6">
             <label className="block text-gray-800 font-bold text-lg mb-3">
               Observaciones Generales de la Recepción
@@ -1092,7 +1053,6 @@ export default function RecepcionForm() {
             />
           </div>
 
-          {/* Botones de acción */}
           <div className="flex flex-col md:flex-row gap-4 justify-between items-center">
             <div className="flex gap-4">
               <button 
@@ -1131,7 +1091,6 @@ export default function RecepcionForm() {
             </div>
           </div>
 
-          {/* Resumen */}
           {totales.productosConRecepcion > 0 && (
             <div className="mt-6 p-4 bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-xl">
               <h3 className="font-bold text-gray-800 mb-2 flex items-center gap-2">

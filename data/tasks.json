@@ -451,7 +451,7 @@
     "id": "TASK-3689",
     "title": "We need to bypass the solid state AGP microchip!",
     "status": "todo",
-    "label": 'documentation',
+    "label": "documentation",
     "priority": "high"
   },
   {
@@ -654,7 +654,7 @@
     "id": "TASK-9879",
     "title": "Try to back up the RAM pixel, maybe it will generate the bluetooth system!",
     "status": "in progress",
-    "label": 'documentation',
+    "label": "documentation",
     "priority": "low"
   },
   {

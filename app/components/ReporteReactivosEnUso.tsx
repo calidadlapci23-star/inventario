@@ -262,7 +262,7 @@ const ReporteReactivosEnUso = () => {
               estado: 'finalizado',
               fechaFinalizacion: Timestamp.now(),
               observaciones: observacionFinalizacion || `Finalizado por ${usuarioActual.nombre}`
-            }
+            } as ReactivoEnUso
           : r
       );
       

@@ -1,0 +1,60 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+enum Frecuencia {
+  DIARIO
+  SEMANAL
+  MENSUAL
+  TRIMESTRAL
+  SEMESTRAL
+  ANUAL
+  IRREGULAR
+}
+
+model Equipo {
+  id             String    @id @default(cuid())
+  nombre         String    @unique
+  descripcion    String
+  modelo         String
+  serie          String
+  fechaInicio    DateTime
+  tareas         Tarea[]
+  registros      RegistroMantenimiento[]
+  incidentes     Incidente[]
+}
+
+model Tarea {
+  id             String    @id @default(cuid())
+  descripcion    String
+  frecuencia     Frecuencia 
+  equipoId       String
+  equipo         Equipo    @relation(fields: [equipoId], references: [id])
+  registros      RegistroMantenimiento[]
+}
+
+model RegistroMantenimiento {
+  id             String    @id @default(cuid())
+  tareaId        String
+  tarea          Tarea     @relation(fields: [tareaId], references: [id])
+  equipoId       String
+  equipo         Equipo    @relation(fields: [equipoId], references: [id])
+  fecha          DateTime
+  realizadoPor   String
+  createdAt      DateTime  @default(now())
+}
+
+model Incidente {
+    id           String    @id @default(cuid())
+    fecha        DateTime  @default(now())
+    detalle      String
+    estado       String
+    reportadoPor String
+    equipoId     String
+    equipo       Equipo    @relation(fields: [equipoId], references: [id])
+}

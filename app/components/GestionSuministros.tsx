@@ -63,6 +63,10 @@ import {
   Copy,
   Trash
 } from 'lucide-react';
+import { useAuth } from '../context/AuthContext'; // 👈 Ruta corregida
+import { useRouter } from 'next/navigation';
+
+
 
 // Interfaces principales actualizadas
 interface Producto {
@@ -135,6 +139,7 @@ interface ProductoOrden {
   proveedor?: string;
 }
 
+// MODIFICADO: Se agregaron campos de contacto del proveedor
 interface OrdenCompra {
   id: string;
   numero: string;
@@ -143,6 +148,9 @@ interface OrdenCompra {
   solicitudNumero: string;
   proveedor: string;
   proveedor_id: string;
+  proveedor_contacto?: string; // Nuevo
+  proveedor_telefono?: string;  // Nuevo
+  proveedor_email?: string;     // Nuevo
   productos: ProductoOrden[];
   subtotal: number;
   iva: number;
@@ -165,7 +173,7 @@ interface Proveedor {
   nombre: string;
   contacto?: string;
   telefono?: string;
-  email?: string;
+  correo?: string;
   direccion?: string;
   pruebas_por_caja_default?: number; // Nuevo campo
 }
@@ -605,14 +613,15 @@ const FormularioRecepcion = React.memo(({
       const nuevosProductos = [...prev];
       if (index < nuevosProductos.length) {
         const productoActualizado = { ...nuevosProductos[index] };
-        productoActualizado[campo as keyof RecepcionProducto] = valor;
         
-        // Si se actualiza cantidadRecibida o pruebasPorCaja, recalcular totalPruebasRecibidas de la fila y nuevoStock (provisional)
+        // ✅ Forzar la asignación con 'as any' para evitar el error de tipo
+        (productoActualizado as any)[campo] = valor;
+        
+        // Si se actualiza cantidadRecibida o pruebasPorCaja, recalcular...
         if (campo === 'cantidadRecibida' || campo === 'pruebasPorCaja') {
           const pruebas = productoActualizado.pruebasPorCaja || 1;
           const totalPruebasFila = productoActualizado.cantidadRecibida * pruebas;
           productoActualizado.totalPruebasRecibidas = totalPruebasFila;
-          // El nuevoStock se recalculará globalmente al final, aquí lo dejamos como referencia
           productoActualizado.nuevoStock = productoActualizado.stockActual + totalPruebasFila;
         }
         
@@ -773,9 +782,10 @@ const FormularioRecepcion = React.memo(({
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg max-w-7xl w-full max-h-[90vh] overflow-hidden flex flex-col">
-        <div className="p-6 border-b bg-gradient-to-r from-blue-50 to-green-50">
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-0">
+      <div className="bg-white w-screen h-screen flex flex-col overflow-hidden">
+        {/* Header fijo */}
+        <div className="p-6 border-b bg-gradient-to-r from-blue-50 to-green-50 flex-shrink-0">
           <div className="flex justify-between items-start">
             <div>
               <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
@@ -797,7 +807,7 @@ const FormularioRecepcion = React.memo(({
               </div>
               <div className="mt-2 text-xs text-blue-600 flex items-center gap-1">
                 <RefreshCw className="w-3 h-3" />
-                <span>Los datos se actualizan automáticamente cada 90 segundos</span>
+                <span>Los datos se actualizan automáticamente cada 190 segundos</span>
               </div>
               {resumen.productosConPruebasPorCaja > 0 && (
                 <div className="mt-1 text-sm text-blue-600 flex items-center gap-1">
@@ -821,6 +831,7 @@ const FormularioRecepcion = React.memo(({
           </div>
         </div>
         
+        {/* Contenido desplazable verticalmente */}
         <div className="flex-1 overflow-y-auto p-6">
           {/* Información de factura */}
           <div className="mb-8 p-4 bg-gray-50 rounded-lg">
@@ -1032,7 +1043,7 @@ const FormularioRecepcion = React.memo(({
             </div>
           </div>
 
-          {/* Tabla de productos */}
+          {/* Tabla de productos - SOLO scroll horizontal */}
           <div className="mb-8">
             <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
               <Package className="w-5 h-5" />
@@ -1041,7 +1052,7 @@ const FormularioRecepcion = React.memo(({
             
             <div className="overflow-x-auto border rounded-lg">
               <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
+                <thead className="bg-gray-50 sticky top-0">
                   <tr>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">PRODUCTO</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase bg-blue-50">PRUEBAS/CAJA</th>
@@ -1070,7 +1081,7 @@ const FormularioRecepcion = React.memo(({
                     />
                   ))}
                 </tbody>
-                <tfoot className="bg-gray-50">
+                <tfoot className="bg-gray-50 sticky bottom-0">
                   <tr>
                     <td className="px-4 py-3 font-medium">TOTALES</td>
                     <td className="px-4 py-3 font-medium bg-blue-50">
@@ -1144,7 +1155,8 @@ const FormularioRecepcion = React.memo(({
           </div>
         </div>
         
-        <div className="p-6 border-t bg-gray-50">
+        {/* Footer fijo */}
+        <div className="p-6 border-t bg-gray-50 flex-shrink-0">
           <div className="flex justify-between items-center">
             <div className="flex gap-3">
               <button
@@ -1203,7 +1215,7 @@ const FormularioRecepcion = React.memo(({
 
 FormularioRecepcion.displayName = 'FormularioRecepcion';
 
-const ReporteStockActual = () => {
+const GestionSuministros = () => {
   // Estados principales
   const [productos, setProductos] = useState<Producto[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1234,7 +1246,7 @@ const ReporteStockActual = () => {
     puntuacionTotal: 0,
     porcentajeTotal: 0,
     observacionesEvaluacion: '',
-    evaluadoPor: 'Ana López',
+    evaluadoPor: '',
     fechaEvaluacion: new Date()
   });
   
@@ -1250,18 +1262,37 @@ const ReporteStockActual = () => {
   const [mostrarFormularioRecepcion, setMostrarFormularioRecepcion] = useState(false);
   const [menuAbiertoId, setMenuAbiertoId] = useState<string | null>(null);
 
-  // Usuario actual
-  const usuarioActual = {
-    id: 'user_001',
-    nombre: 'Ana López',
-    departamento: 'Laboratorio Clínico',
-    rol: 'aprobador'
-  };
+  // Obtener usuario autenticado
+  const { user, loading: authLoading } = useAuth();
 
-  // Refs para tracking de updates
-  const updatesRef = useRef<Map<number, Map<string, any>>>(new Map());
-  const updateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const intervaloRefrescoRef = useRef<NodeJS.Timeout | null>(null);
+  // Construir objeto usuarioActual basado en el correo (parte local, sin dominio)
+  const usuarioActual = useMemo(() => {
+    if (!user || !user.email) return null;
+
+    // Extraer parte local del email (antes de @)
+    const emailLocalPart = user.email.split('@')[0];
+    // Capitalizar primera letra para mejor presentación
+    const nombre = emailLocalPart.charAt(0).toUpperCase() + emailLocalPart.slice(1).toLowerCase();
+
+    return {
+      id: user.uid,
+      nombre: nombre,
+      email: user.email,
+      departamento: 'Sin departamento', // Valor por defecto, puede sobrescribirse con datos del perfil si existen
+      rol: 'usuario'
+    };
+  }, [user]);
+
+  // Actualizar evaluadoPor cuando usuarioActual esté disponible
+  useEffect(() => {
+    if (usuarioActual) {
+      setEvaluacion(prev => ({
+        ...prev,
+        evaluadoPor: usuarioActual.nombre
+      }));
+    }
+  }, [usuarioActual]);
+
 
   // Función para obtener el valor de pruebas por caja del catálogo
   const obtenerPruebasPorCaja = (nombre: string, fabricante: string, proveedor: string) => {
@@ -1280,106 +1311,115 @@ const ReporteStockActual = () => {
     return 0;
   };
 
-  // Función optimizada para actualizar productos en batch
-  const actualizarRecepcionProductoOptimizada = useCallback((index: number, campo: string, valor: any) => {
-    if (!updatesRef.current.has(index)) {
-      updatesRef.current.set(index, new Map());
-    }
-    updatesRef.current.get(index)!.set(campo, valor);
-    
-    if (updateTimeoutRef.current) {
-      clearTimeout(updateTimeoutRef.current);
-    }
-    
-    updateTimeoutRef.current = setTimeout(() => {
-      const updates = updatesRef.current;
-      if (updates.size === 0) return;
-      
-      setRecepcionProductos(prev => {
-        const nuevosProductos = [...prev];
-        updates.forEach((campos, idx) => {
-          if (idx < nuevosProductos.length) {
-            const productoActualizado = { ...nuevosProductos[idx] };
-            campos.forEach((valor, campo) => {
-              productoActualizado[campo as keyof RecepcionProducto] = valor;
-              
-              if (campo === 'cantidadRecibida') {
-                productoActualizado.diferencia = valor - productoActualizado.cantidadOrdenada;
-                // Calcular nuevo stock basado en pruebas por caja
-                const unidadesAAgregar = productoActualizado.pruebasPorCaja && productoActualizado.pruebasPorCaja > 0 
-                  ? valor * productoActualizado.pruebasPorCaja 
-                  : valor;
-                productoActualizado.nuevoStock = productoActualizado.stockActual + unidadesAAgregar;
-                productoActualizado.totalPruebasRecibidas = productoActualizado.pruebasPorCaja && productoActualizado.pruebasPorCaja > 0 
-                  ? valor * productoActualizado.pruebasPorCaja 
-                  : valor;
-              }
-              
-              if (campo === 'pruebasPorCaja') {
-                // Recalcular cuando cambian las pruebas por caja
-                const unidadesAAgregar = valor && valor > 0 
-                  ? productoActualizado.cantidadRecibida * valor 
-                  : productoActualizado.cantidadRecibida;
-                productoActualizado.nuevoStock = productoActualizado.stockActual + unidadesAAgregar;
-                productoActualizado.totalPruebasRecibidas = valor && valor > 0 
-                  ? productoActualizado.cantidadRecibida * valor 
-                  : productoActualizado.cantidadRecibida;
-              }
-            });
-            nuevosProductos[idx] = productoActualizado;
-          }
-        });
-        
-        updatesRef.current.clear();
-        return nuevosProductos;
-      });
-    }, 100);
-  }, []);
-
-  // Función para aplicar pruebas por caja
-  const aplicarPruebasPorCaja = useCallback((index: number) => {
-    setRecepcionProductos(prev => {
-      const nuevosProductos = [...prev];
-      if (index < nuevosProductos.length && 
-          nuevosProductos[index].pruebasPorCajaDefault !== undefined && 
-          nuevosProductos[index].pruebasPorCajaDefault! > 0) {
-        
-        const producto = nuevosProductos[index];
-        producto.pruebasPorCaja = producto.pruebasPorCajaDefault;
-        // Recalcular nuevo stock y total de pruebas
-        const unidadesAAgregar = producto.cantidadRecibida * producto.pruebasPorCajaDefault!;
-        producto.nuevoStock = producto.stockActual + unidadesAAgregar;
-        producto.totalPruebasRecibidas = unidadesAAgregar;
+  // MODIFICADO: Función auxiliar para buscar proveedor por nombre flexible
+  const buscarProveedorPorNombre = useCallback((nombreCorto: string): Proveedor | undefined => {
+    const nombreCortoNorm = nombreCorto.toLowerCase().trim();
+    return proveedores.find(p => {
+      const nombreLargoNorm = p.nombre.toLowerCase().trim();
+      // Si el nombre largo contiene el corto (y el corto tiene al menos 4 caracteres)
+      if (nombreCortoNorm.length >= 4 && nombreLargoNorm.includes(nombreCortoNorm)) {
+        return true;
       }
-      return nuevosProductos;
+      // Si el nombre corto contiene el largo (solo si el largo es muy corto, para evitar falsos)
+      if (nombreLargoNorm.length <= 5 && nombreCortoNorm.includes(nombreLargoNorm)) {
+        return true;
+      }
+      return false;
     });
-  }, []);
+  }, [proveedores]);
 
-  // Función optimizada para ajustar cantidad
-  const ajustarCantidadRecibidaOptimizada = useCallback((index: number, incremento: number) => {
+// Refs para tracking de updates
+const updatesRef = useRef<Map<number, Map<string, any>>>(new Map());
+const updateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+const intervaloRefrescoRef = useRef<NodeJS.Timeout | null>(null);
+
+// Función optimizada para actualizar productos en batch (modificada para trabajar en pruebas)
+const actualizarRecepcionProductoOptimizada = useCallback((index: number, campo: string, valor: any) => {
+  if (!updatesRef.current.has(index)) {
+    updatesRef.current.set(index, new Map());
+  }
+  updatesRef.current.get(index)!.set(campo, valor);
+
+  if (updateTimeoutRef.current) {
+    clearTimeout(updateTimeoutRef.current);
+  }
+
+  updateTimeoutRef.current = setTimeout(() => {
+    const updates = updatesRef.current;
+    if (updates.size === 0) return;
+
     setRecepcionProductos(prev => {
       const nuevosProductos = [...prev];
-      if (index < nuevosProductos.length) {
-        const producto = nuevosProductos[index];
-        const nuevaCantidad = producto.cantidadRecibida + incremento;
-        
-        if (nuevaCantidad >= 0) {
-          producto.cantidadRecibida = nuevaCantidad;
-          producto.diferencia = nuevaCantidad - producto.cantidadOrdenada;
-          
-          // Calcular unidades a agregar basado en pruebas por caja
-          const unidadesAAgregar = producto.pruebasPorCaja && producto.pruebasPorCaja > 0 
-            ? nuevaCantidad * producto.pruebasPorCaja 
-            : nuevaCantidad;
-          producto.nuevoStock = producto.stockActual + unidadesAAgregar;
-          producto.totalPruebasRecibidas = producto.pruebasPorCaja && producto.pruebasPorCaja > 0 
-            ? nuevaCantidad * producto.pruebasPorCaja 
-            : nuevaCantidad;
+      updates.forEach((campos, idx) => {
+        if (idx < nuevosProductos.length) {
+          const productoActualizado = { ...nuevosProductos[idx] };
+          campos.forEach((valor, campo) => {
+            // Forzar la asignación con 'as any' para evitar el error de tipo
+            (productoActualizado as any)[campo] = valor;
+
+            if (campo === 'cantidadRecibida') {
+              // 'valor' ya está en pruebas
+              // La diferencia ya no se usa (columna oculta)
+              // productoActualizado.diferencia = valor - (productoActualizado.cantidadOrdenada * (productoActualizado.pruebasPorCaja || 1));
+              productoActualizado.nuevoStock = productoActualizado.stockActual + valor;
+              productoActualizado.totalPruebasRecibidas = valor;
+            }
+
+            if (campo === 'pruebasPorCaja') {
+              // Solo actualizamos el valor de pruebas por caja, no afecta el stock
+              // porque la cantidad recibida ya está en pruebas
+              // No se recalcula nada
+            }
+          });
+          nuevosProductos[idx] = productoActualizado;
         }
-      }
+      });
+
+      updatesRef.current.clear();
       return nuevosProductos;
     });
-  }, []);
+  }, 100);
+}, []);
+
+// Función para aplicar pruebas por caja (modificada: solo asigna el valor por defecto)
+const aplicarPruebasPorCaja = useCallback((index: number) => {
+  setRecepcionProductos(prev => {
+    const nuevosProductos = [...prev];
+    if (index < nuevosProductos.length && 
+        nuevosProductos[index].pruebasPorCajaDefault !== undefined && 
+        nuevosProductos[index].pruebasPorCajaDefault! > 0) {
+
+      const producto = nuevosProductos[index];
+      // Solo actualizamos el campo pruebasPorCaja, sin modificar el stock
+      producto.pruebasPorCaja = producto.pruebasPorCajaDefault;
+      // No se recalcula nuevoStock ni totalPruebasRecibidas porque la cantidad recibida ya está en pruebas
+      // y el stock actual + cantidadRecibida ya es correcto.
+    }
+    return nuevosProductos;
+  });
+}, []);
+
+// Función optimizada para ajustar cantidad (modificada para trabajar en pruebas)
+const ajustarCantidadRecibidaOptimizada = useCallback((index: number, incremento: number) => {
+  setRecepcionProductos(prev => {
+    const nuevosProductos = [...prev];
+    if (index < nuevosProductos.length) {
+      const producto = nuevosProductos[index];
+      const nuevaCantidad = producto.cantidadRecibida + incremento;
+
+      if (nuevaCantidad >= 0) {
+        producto.cantidadRecibida = nuevaCantidad;
+        // La diferencia ya no se usa
+        // producto.diferencia = nuevaCantidad - (producto.cantidadOrdenada * (producto.pruebasPorCaja || 1));
+
+        // nuevaCantidad ya está en pruebas
+        producto.nuevoStock = producto.stockActual + nuevaCantidad;
+        producto.totalPruebasRecibidas = nuevaCantidad;
+      }
+    }
+    return nuevosProductos;
+  });
+}, []);
 
   // Cleanup timeout en unmount
   useEffect(() => {
@@ -1427,7 +1467,8 @@ const ReporteStockActual = () => {
             unidad_medida: data.unidad_medida || 'unidades',
             codigo: data.codigo || '',
             proveedor: data.proveedor || 'Sin proveedor',
-            proveedor_id: data.proveedor_id || '',
+            // ✅ CORREGIDO: usar el nombre real del campo en Firebase
+            proveedor_id: data.provedor_id || '',
             precio_unitario: Number(data.precio_unitario) || 0,
             categoria: data.categoria || '',
             fabricante: data.fabricante || '',
@@ -1438,22 +1479,24 @@ const ReporteStockActual = () => {
         });
         setProductos(productosData);
         
-        // Cargar proveedores
-        const proveedoresRef = collection(db, 'proveedores');
-        const qProveedores = query(proveedoresRef, orderBy('nombre'));
-        const proveedoresSnapshot = await getDocs(qProveedores);
-        
-        const proveedoresData = proveedoresSnapshot.docs.map(doc => ({
-          id: doc.id,
-          nombre: doc.data().nombre || 'Sin nombre',
-          contacto: doc.data().contacto || '',
-          telefono: doc.data().telefono || '',
-          email: doc.data().email || '',
-          direccion: doc.data().direccion || '',
-          pruebas_por_caja_default: Number(doc.data().pruebas_por_caja_default) || 0
-        } as Proveedor));
-        setProveedores(proveedoresData);
-        
+       // Cargar proveedores - CORREGIDO: usando los nombres reales de Firebase
+const proveedoresRef = collection(db, 'proveedores');
+const qProveedores = query(proveedoresRef, orderBy('razonSocial'));
+const proveedoresSnapshot = await getDocs(qProveedores);
+
+const proveedoresData = proveedoresSnapshot.docs.map(doc => {
+  const data = doc.data();
+  return {
+    id: doc.id,
+    nombre: data.razonSocial || 'Sin nombre',
+    contacto: data.contacto || '',
+    telefono: data.telefono || '',
+    correo: data.correo || '',   // ← cambia 'email' por 'correo'
+    direccion: data.direccion || '',
+    pruebas_por_caja_default: Number(data.pruebas_por_caja_default) || 0
+  } as Proveedor;
+});
+
         // Cargar solicitudes
         const solicitudesRef = collection(db, 'solicitudes');
         const qSolicitudes = query(solicitudesRef, orderBy('numero', 'desc'), limit(50));
@@ -1510,6 +1553,9 @@ const ReporteStockActual = () => {
             solicitudNumero: data.solicitudNumero || '',
             proveedor: data.proveedor || 'Sin proveedor',
             proveedor_id: data.proveedor_id || '',
+            proveedor_contacto: data.proveedor_contacto || '', // MODIFICADO: campo nuevo
+            proveedor_telefono: data.proveedor_telefono || '', // MODIFICADO: campo nuevo
+            proveedor_email: data.proveedor_email || '',       // MODIFICADO: campo nuevo
             productos: (data.productos || []).map((p: any) => ({
               id: p.id || '',
               productoId: p.productoId || '',
@@ -1562,7 +1608,7 @@ const ReporteStockActual = () => {
       // Crear nuevo intervalo de 90 segundos
       intervaloRefrescoRef.current = setInterval(() => {
         refrescarDatosModalRecepcion();
-      }, 90000); // 90 segundos = 90,000 milisegundos
+      }, 790000); // 
       
       return () => {
         if (intervaloRefrescoRef.current) {
@@ -1663,6 +1709,11 @@ const ReporteStockActual = () => {
 
   // Función para crear solicitud
   const crearSolicitud = async () => {
+    if (!usuarioActual) {
+      mostrarMensaje('error', 'Debe iniciar sesión para crear una solicitud');
+      return;
+    }
+
     if (carrito.length === 0) {
       mostrarMensaje('error', 'El carrito está vacío');
       return;
@@ -1793,6 +1844,11 @@ const ReporteStockActual = () => {
 
   // Función para eliminar una solicitud
   const eliminarSolicitud = async (solicitudId: string, solicitudNumero: string) => {
+    if (!usuarioActual) {
+      mostrarMensaje('error', 'Debe iniciar sesión para realizar esta acción');
+      return;
+    }
+
     if (!window.confirm(`¿Estás seguro de que deseas eliminar la solicitud ${solicitudNumero}? Esta acción no se puede deshacer.`)) {
       return;
     }
@@ -1856,6 +1912,11 @@ const ReporteStockActual = () => {
 
   // Función para eliminar una orden de compra
   const eliminarOrdenCompra = async (ordenId: string, ordenNumero: string, solicitudNumero: string) => {
+    if (!usuarioActual) {
+      mostrarMensaje('error', 'Debe iniciar sesión para realizar esta acción');
+      return;
+    }
+
     if (!window.confirm(`¿Estás seguro de que deseas eliminar la orden de compra ${ordenNumero}? Esta acción no se puede deshacer.`)) {
       return;
     }
@@ -1918,6 +1979,11 @@ const ReporteStockActual = () => {
     cantidadAprobada?: number, 
     comentario?: string
   ) => {
+    if (!usuarioActual) {
+      mostrarMensaje('error', 'Debe iniciar sesión para realizar esta acción');
+      return;
+    }
+
     try {
       const solicitud = solicitudes.find(s => s.id === solicitudId);
       if (!solicitud) return;
@@ -2010,8 +2076,13 @@ const ReporteStockActual = () => {
     }
   };
 
-  // Función para generar órdenes de compra agrupadas por proveedor
+  // MODIFICADO: Función para generar órdenes de compra agrupadas por proveedor (con búsqueda flexible y datos de contacto)
   const generarOrdenesPorProveedor = async (solicitudId: string) => {
+    if (!usuarioActual) {
+      mostrarMensaje('error', 'Debe iniciar sesión para generar órdenes');
+      return;
+    }
+
     try {
       setProcesando(true);
       const solicitud = solicitudes.find(s => s.id === solicitudId);
@@ -2041,8 +2112,35 @@ const ReporteStockActual = () => {
         const proveedorKey = proveedoresKeys[i];
         const productos = productosPorProveedor[proveedorKey];
         
-        const proveedorInfo = proveedores.find(p => p.id === proveedorKey) || 
-                            proveedores.find(p => p.nombre === proveedorKey);
+        // Buscar proveedor por ID
+        let proveedorInfo = proveedores.find(p => p.id === proveedorKey);
+        
+        // Si no se encuentra por ID, buscar por nombre flexible
+        if (!proveedorInfo) {
+          const nombreCorto = productos[0]?.proveedor;
+          if (nombreCorto) {
+            proveedorInfo = buscarProveedorPorNombre(nombreCorto);
+          }
+        }
+        
+        // Si se encuentra el proveedor, actualizar productos con el ID correcto (opcional, mejora futura)
+        if (proveedorInfo) {
+          // Usar batch para actualizar todos los productos de este grupo
+          const batch = writeBatch(db);
+          for (const producto of productos) {
+            if (producto.productoId) {
+              const productoRef = doc(db, 'productos', producto.productoId);
+              batch.update(productoRef, { proveedor_id: proveedorInfo.id });
+            }
+          }
+          await batch.commit();
+        }
+        
+        const nombreProveedorOrden = proveedorInfo?.nombre || productos[0]?.proveedor || 'Sin proveedor';
+        const proveedorIdOrden = proveedorInfo?.id || proveedorKey || '';
+        const proveedorContacto = proveedorInfo?.contacto || '';
+        const proveedorTelefono = proveedorInfo?.telefono || '';
+        const proveedorEmail = proveedorInfo?.correo || '';
         
         const numeroBase = obtenerNumeroBaseSolicitud(solicitud.numero);
         const sufijoLetra = generarSufijoLetra(ordenesExistentes.length + i);
@@ -2083,14 +2181,17 @@ const ReporteStockActual = () => {
           fecha: Timestamp.now(),
           solicitudId: solicitud.id || '',
           solicitudNumero: solicitud.numero || '',
-          proveedor: proveedorInfo?.nombre || productos[0]?.proveedor || 'Sin proveedor',
-          proveedor_id: proveedorInfo?.id || proveedorKey || '',
+          proveedor: nombreProveedorOrden,
+          proveedor_id: proveedorIdOrden,
+          proveedor_contacto: proveedorContacto,
+          proveedor_telefono: proveedorTelefono,
+          proveedor_email: proveedorEmail,
           productos: productosOrden,
           subtotal: subtotal || 0,
           iva: iva || 0,
           total: total || 0,
           estado: 'generada',
-          observaciones: `Generada desde solicitud ${solicitud.numero} - Proveedor: ${proveedorInfo?.nombre || proveedorKey}`,
+          observaciones: `Generada desde solicitud ${solicitud.numero} - Proveedor: ${nombreProveedorOrden}`,
           creadaPor: usuarioActual.nombre,
           totalPruebas: totalPruebas
         };
@@ -2145,9 +2246,9 @@ const ReporteStockActual = () => {
 
       mostrarMensaje('exito', `Se generaron ${ordenesGeneradas.length} órdenes de compra`);
 
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error al generar órdenes:', error);
-      mostrarMensaje('error', 'Error al generar las órdenes de compra', error.message);
+      mostrarMensaje('error', 'Error al generar las órdenes de compra', (error as any).message);
     } finally {
       setProcesando(false);
     }
@@ -2166,6 +2267,11 @@ const ReporteStockActual = () => {
 
   // Iniciar recepción de orden
   const iniciarRecepcion = async (orden: OrdenCompra) => {
+    if (!usuarioActual) {
+      mostrarMensaje('error', 'Debe iniciar sesión para realizar la recepción');
+      return;
+    }
+
     try {
       setOrdenSeleccionada(orden);
       
@@ -2300,6 +2406,11 @@ const ReporteStockActual = () => {
 
   // Registrar recepción - AHORA GUARDA EVALUACIÓN EN LA ORDEN Y PERMITE NO APROBADAS
   const registrarRecepcion = async () => {
+    if (!usuarioActual) {
+      mostrarMensaje('error', 'Debe iniciar sesión para registrar la recepción');
+      return;
+    }
+
     if (!validarRecepcion() || !ordenSeleccionada) return;
 
     try {
@@ -2482,6 +2593,9 @@ const ReporteStockActual = () => {
               solicitudNumero: data.solicitudNumero || '',
               proveedor: data.proveedor || 'Sin proveedor',
               proveedor_id: data.proveedor_id || '',
+              proveedor_contacto: data.proveedor_contacto || '',
+              proveedor_telefono: data.proveedor_telefono || '',
+              proveedor_email: data.proveedor_email || '',
               productos: (data.productos || []).map((p: any) => ({
                 id: p.id || '',
                 productoId: p.productoId || '',
@@ -2526,7 +2640,7 @@ const ReporteStockActual = () => {
               unidad_medida: data.unidad_medida || 'unidades',
               codigo: data.codigo || '',
               proveedor: data.proveedor || 'Sin proveedor',
-              proveedor_id: data.proveedor_id || '',
+              proveedor_id: data.provedor_id || '',
               precio_unitario: Number(data.precio_unitario) || 0,
               categoria: data.categoria || '',
               fabricante: data.fabricante || '',
@@ -2756,6 +2870,9 @@ const ReporteStockActual = () => {
                 <div className="space-y-2 text-sm">
                   <div><span className="font-medium">Solicitud origen:</span> {ordenSeleccionada.solicitudNumero}</div>
                   <div><span className="font-medium">Proveedor:</span> {ordenSeleccionada.proveedor}</div>
+                  <div><span className="font-medium">Contacto:</span> {ordenSeleccionada.proveedor_contacto || 'N/A'}</div>
+                  <div><span className="font-medium">Teléfono:</span> {ordenSeleccionada.proveedor_telefono || 'N/A'}</div>
+                  <div><span className="font-medium">Email:</span> {ordenSeleccionada.proveedor_email || 'N/A'}</div>
                   <div><span className="font-medium">Creada por:</span> {ordenSeleccionada.creadaPor}</div>
                   <div><span className="font-medium">Numeración:</span> {ordenSeleccionada.numero} ← {ordenSeleccionada.solicitudNumero}</div>
                   {ordenSeleccionada.fechaRecepcion && (
@@ -2873,10 +2990,9 @@ const ReporteStockActual = () => {
 
   DetalleOrdenModal.displayName = 'DetalleOrdenModal';
 
-  // Función simplificada para generar PDF
   const generarPDFOrdenCompra = (orden: OrdenCompra) => {
     if (!orden) return;
-
+  
     try {
       const contenidoHTML = `
         <!DOCTYPE html>
@@ -2885,21 +3001,126 @@ const ReporteStockActual = () => {
           <meta charset="UTF-8">
           <title>Orden de Compra ${orden.numero}</title>
           <style>
-            body { font-family: Arial, sans-serif; margin: 20px; }
-            .header-container { margin-bottom: 30px; }
-            .logo-container { text-align: left; margin-bottom: 10px; }
-            .header-content { text-align: center; margin-bottom: 20px; }
-            .title { font-size: 24px; font-weight: bold; margin-bottom: 10px; }
-            .subtitle { font-size: 18px; margin-bottom: 20px; }
-            table { width: 100%; border-collapse: collapse; margin: 20px 0; }
-            th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-            th { background-color: #f2f2f2; font-weight: bold; }
-            .section { margin: 20px 0; }
-            .section-title { font-size: 16px; font-weight: bold; margin-bottom: 10px; }
-            .total { font-weight: bold; font-size: 18px; margin-top: 20px; }
-            .logo { max-width: 225px; }
-            .info-row { display: flex; justify-content: space-between; margin-bottom: 5px; }
-            .info-label { font-weight: bold; width: 200px; }
+            body { 
+              font-family: Arial, sans-serif; 
+              margin: 10px; 
+              font-size: 11px;
+              line-height: 1.3;
+            }
+            .header-container { 
+              margin-bottom: 15px; 
+              text-align: center;
+            }
+            .logo-container { 
+              text-align: left; 
+              margin-bottom: 5px; 
+            }
+            .logo { 
+              max-width: 150px; 
+            }
+            .title { 
+              font-size: 18px; 
+              font-weight: bold; 
+              margin: 5px 0; 
+            }
+            .subtitle { 
+              font-size: 14px; 
+              margin: 5px 0; 
+            }
+            .clave { 
+              font-size: 10px; 
+              color: #555; 
+            }
+            .info-grid {
+              display: flex;
+              flex-wrap: wrap;
+              border: 1px solid #ddd;
+              padding: 8px;
+              margin: 10px 0;
+              background: #f9f9f9;
+            }
+            .info-item {
+              flex: 1 1 45%;
+              margin: 2px 0;
+            }
+            .info-label {
+              font-weight: bold;
+              display: inline-block;
+              width: 130px;
+            }
+            /* Sección proveedor: el nombre ocupa toda la línea */
+            .proveedor-grid {
+              border: 1px solid #ddd;
+              padding: 8px;
+              margin: 10px 0;
+              background: #f9f9f9;
+            }
+            .proveedor-row {
+              display: flex;
+              flex-wrap: wrap;
+              margin: 2px 0;
+            }
+            .proveedor-label {
+              font-weight: bold;
+              width: 130px;
+              flex-shrink: 0;
+            }
+            .proveedor-value {
+              flex: 1;
+            }
+            /* Para el nombre, que no se rompa */
+            .proveedor-nombre {
+              font-weight: normal;
+              white-space: normal; /* permitir varias líneas si es muy largo, pero lo pondremos en una sola si es posible */
+            }
+            table { 
+              width: 100%; 
+              border-collapse: collapse; 
+              margin: 10px 0; 
+              font-size: 10px;
+            }
+            th, td { 
+              border: 1px solid #ddd; 
+              padding: 4px; 
+              text-align: left; 
+            }
+            th { 
+              background-color: #f2f2f2; 
+              font-weight: bold; 
+            }
+            .totales {
+              text-align: right;
+              margin-top: 5px;
+            }
+            .total-row {
+              font-weight: bold;
+              font-size: 12px;
+            }
+            /* Destacar mensaje de factura */
+            .mensaje-factura {
+              margin: 20px 0 10px 0;
+              padding: 12px;
+              background-color: #fff3cd;
+              border: 2px solid #ffc107;
+              border-radius: 8px;
+              text-align: center;
+              font-size: 14px;
+              font-weight: bold;
+              color: #856404;
+              box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+            }
+            .firma {
+              margin-top: 20px;
+              display: flex;
+              justify-content: space-between;
+            }
+            .firma-item {
+              width: 45%;
+              border-top: 1px solid #000;
+              padding-top: 5px;
+              text-align: center;
+              font-size: 10px;
+            }
           </style>
         </head>
         <body>
@@ -2907,123 +3128,85 @@ const ReporteStockActual = () => {
             <div class="logo-container">
               <img src="/logo.jpg" alt="Logo" class="logo">
             </div>
-            <div class="header-content">
-              <div class="title">LABORATORIO DE PATOLOGIA CLINICA INTEGRAL S.A DE C.V</div>
-              <div class="subtitle">ORDEN DE COMPRA</div>
-              <div>CLAVE: LAP-FOR-ADQ-24 | VERSIÓN: 2</div>
+            <div class="title">LABORATORIO DE PATOLOGIA CLINICA INTEGRAL S.A DE C.V</div>
+            <div class="subtitle">ORDEN DE COMPRA</div>
+            <div class="clave">CLAVE: LAP-FOR-ADQ-24 | VERSIÓN: 2</div>
+          </div>
+  
+          <!-- Datos de la orden -->
+          <div class="info-grid">
+            <div class="info-item"><span class="info-label">No. orden de compra:</span> ${orden.numero}</div>
+            <div class="info-item"><span class="info-label">Fecha de Emisión:</span> ${convertirFecha(orden.fecha).toLocaleDateString()}</div>
+            <div class="info-item"><span class="info-label">Nombre del Solicitante:</span> ${orden.creadaPor}</div>
+            <div class="info-item"><span class="info-label">Teléfono:</span> 5552073380</div>
+          </div>
+  
+          <!-- Datos del proveedor: nombre en una línea completa -->
+          <div class="proveedor-grid">
+            <div class="proveedor-row">
+              <span class="proveedor-label">Nombre Proveedor:</span>
+              <span class="proveedor-value proveedor-nombre">${orden.proveedor}</span>
+            </div>
+            <div class="proveedor-row">
+              <span class="proveedor-label">Contacto:</span>
+              <span class="proveedor-value">${orden.proveedor_contacto || 'N/A'}</span>
+            </div>
+            <div class="proveedor-row">
+              <span class="proveedor-label">Teléfono:</span>
+              <span class="proveedor-value">${orden.proveedor_telefono || 'N/A'}</span>
+            </div>
+            <div class="proveedor-row">
+              <span class="proveedor-label">Email:</span>
+              <span class="proveedor-value">${orden.proveedor_email || 'N/A'}</span>
             </div>
           </div>
-
-          <div class="section">
-            <div class="info-row">
-              <span class="info-label">No. orden de compra:</span>
-              <span>${orden.numero}</span>
-            </div>
-            <div class="info-row">
-              <span class="info-label">Fecha de Emisión:</span>
-              <span>${convertirFecha(orden.fecha).toLocaleDateString()}</span>
-            </div>
-            <div class="info-row">
-              <span class="info-label">Nombre del Solicitante:</span>
-              <span>${orden.creadaPor}</span>
-            </div>
-            <div class="info-row">
-              <span class="info-label">Teléfono:</span>
-              <span>5552073380</span>
-            </div>
+  
+          <!-- Detalle de la orden -->
+          <table>
+            <thead>
+              <tr>
+                <th>Cantidad</th>
+                <th>Pruebas/Caja</th>
+                <th>Concepto ó Descripción</th>
+                <th>P. Unitario</th>
+                <th>Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${orden.productos.map(producto => `
+                <tr>
+                  <td>${producto.cantidad}</td>
+                  <td>${producto.pruebas_por_caja ? producto.pruebas_por_caja + ' pruebas' : 'N/A'}</td>
+                  <td>${producto.nombre}</td>
+                  <td>$${producto.precioUnitario.toFixed(2)}</td>
+                  <td>$${(producto.cantidad * producto.precioUnitario).toFixed(2)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+  
+          <!-- Totales -->
+          <div class="totales">
+            <div><span style="font-weight: bold;">Subtotal:</span> $${orden.subtotal.toFixed(2)}</div>
+            <div><span style="font-weight: bold;">IVA (19%):</span> $${orden.iva.toFixed(2)}</div>
+            <div class="total-row"><span style="font-weight: bold;">TOTAL:</span> $${orden.total.toFixed(2)}</div>
+            ${orden.totalPruebas && orden.totalPruebas > 0 ? 
+              `<div style="color: blue;"><span style="font-weight: bold;">Total Pruebas:</span> ${orden.totalPruebas} pruebas</div>` 
+              : ''}
           </div>
-
-          <div class="section">
-            <div class="section-title">DATOS DEL PROVEEDOR</div>
-            <div class="info-row">
-              <span class="info-label">Nombre Proveedor:</span>
-              <span>${orden.proveedor}</span>
-            </div>
-            <div class="info-row">
-              <span class="info-label">Contacto:</span>
-              <span>N/A</span>
-            </div>
-            <div class="info-row">
-              <span class="info-label">Teléfono:</span>
-              <span>N/A</span>
-            </div>
-            <div class="info-row">
-              <span class="info-label">Email:</span>
-              <span>N/A</span>
-            </div>
+  
+          <!-- Mensaje de factura destacado -->
+          <div class="mensaje-factura">
+            ⚡ Para que el pago se efectúe correctamente, por favor, enviar factura al correo <strong>lpccomprobantes@yahoo.com.mx</strong>
           </div>
-
-          <div class="section">
-            <div class="section-title">DETALLE DE LA ORDEN DE COMPRA</div>
-            <table>
-              <thead>
-                <tr>
-                  <th>Cantidad</th>
-                  <th>Pruebas/Caja</th>
-                  <th>Concepto ó Descripción</th>
-                  <th>P. Unitario</th>
-                  <th>Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${orden.productos.map(producto => `
-                  <tr>
-                    <td>${producto.cantidad}</td>
-                    <td>${producto.pruebas_por_caja ? producto.pruebas_por_caja + ' pruebas' : 'N/A'}</td>
-                    <td>${producto.nombre}</td>
-                    <td>$${producto.precioUnitario.toFixed(2)}</td>
-                    <td>$${(producto.cantidad * producto.precioUnitario).toFixed(2)}</td>
-                  </tr>
-                `).join('')}
-                <tr>
-                  <td colspan="3" style="border: none;"></td>
-                  <td style="font-weight: bold; border-top: 2px solid #000;">Subtotal:</td>
-                  <td style="font-weight: bold; border-top: 2px solid #000;">$${orden.subtotal.toFixed(2)}</td>
-                </tr>
-                <tr>
-                  <td colspan="3" style="border: none;"></td>
-                  <td style="font-weight: bold;">IVA (19%):</td>
-                  <td style="font-weight: bold;">$${orden.iva.toFixed(2)}</td>
-                </tr>
-                <tr>
-                  <td colspan="3" style="border: none;"></td>
-                  <td style="font-weight: bold; font-size: 1.2em; border-top: 2px solid #000;">TOTAL:</td>
-                  <td style="font-weight: bold; font-size: 1.2em; border-top: 2px solid #000;">$${orden.total.toFixed(2)}</td>
-                </tr>
-                ${orden.totalPruebas && orden.totalPruebas > 0 ? `
-                <tr>
-                  <td colspan="3" style="border: none;"></td>
-                  <td style="font-weight: bold; color: blue;">Total Pruebas:</td>
-                  <td style="font-weight: bold; color: blue;">${orden.totalPruebas} pruebas</td>
-                </tr>
-                ` : ''}
-              </tbody>
-            </table>
-          </div>
-
-          <div style="margin-top: 50px;">
-            <div style="float: left; width: 45%;">
-              <div style="border-top: 1px solid #000; margin-top: 50px; padding-top: 10px;">
-                <strong>Proveedor</strong><br>
-                Nombre y Firma
-              </div>
-            </div>
-            <div style="float: right; width: 45%;">
-              <div style="border-top: 1px solid #000; margin-top: 50px; padding-top: 10px;">
-                <strong>Autorizado por</strong><br>
-                Nombre y Firma
-              </div>
-            </div>
-            <div style="clear: both;"></div>
-          </div>
-
-          <div style="margin-top: 30px; font-size: 12px; color: #666; text-align: center;">
+  
+          <div style="margin-top: 15px; font-size: 9px; color: #666; text-align: center;">
             Documento generado automáticamente el ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}
           </div>
         </body>
         </html>
       `;
-
+  
       const ventana = window.open('', '_blank');
       if (ventana) {
         ventana.document.write(contenidoHTML);
@@ -3041,24 +3224,12 @@ const ReporteStockActual = () => {
       } else {
         mostrarMensaje('error', 'No se pudo abrir la ventana de impresión');
       }
-
+  
     } catch (error: any) {
       console.error('Error al generar PDF:', error);
       mostrarMensaje('error', 'Error al generar el documento');
     }
   };
-
-  // Cerrar menú al hacer clic fuera
-  useEffect(() => {
-    const handleClickOutside = () => {
-      setMenuAbiertoId(null);
-    };
-
-    document.addEventListener('click', handleClickOutside);
-    return () => {
-      document.removeEventListener('click', handleClickOutside);
-    };
-  }, []);
 
   // Estadísticas para dashboard
   const estadisticas = useMemo(() => {
@@ -3076,7 +3247,7 @@ const ReporteStockActual = () => {
     };
   }, [productos, solicitudes, ordenesCompra]);
 
-  if (loading) {
+  if (loading || authLoading) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-center">
@@ -3188,16 +3359,7 @@ const ReporteStockActual = () => {
         
         <div className="bg-white rounded-lg shadow p-4">
           <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-600">Pruebas en Inventario</p>
-              <p className="text-2xl font-bold text-green-600">
-                {estadisticas.totalPruebasEnInventario.toLocaleString()}
-              </p>
-              <p className="text-xs text-green-600">pruebas totales</p>
-            </div>
-            <div className="p-2 bg-green-100 rounded-lg">
-              <Box className="w-6 h-6 text-green-600" />
-            </div>
+
           </div>
         </div>
       </div>
@@ -3350,7 +3512,7 @@ const ReporteStockActual = () => {
           
           <button
             onClick={crearSolicitud}
-            disabled={procesando || carrito.length === 0}
+            disabled={procesando || carrito.length === 0 || !usuarioActual}
             className="w-full bg-green-600 text-white py-2 rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
             {procesando ? (
@@ -4361,7 +4523,8 @@ const ReporteStockActual = () => {
                           </div>
                         </div>
                         
-                        {usuarioActual.rol === 'aprobador' && producto.estado === 'pendiente' && (
+                        {/* 🔥 MODIFICACIÓN: eliminada la condición de rol para mostrar los botones a cualquier usuario */}
+                        {producto.estado === 'pendiente' && (
                           <div className="flex gap-3 mt-3 pt-3 border-t">
                             <button
                               onClick={() => procesarProductoSolicitud(
@@ -4484,7 +4647,7 @@ const ReporteStockActual = () => {
       <DetalleOrdenModal />
 
       {/* Modal de Formulario de Recepción optimizado */}
-      {mostrarFormularioRecepcion && ordenSeleccionada && (
+      {mostrarFormularioRecepcion && ordenSeleccionada && usuarioActual && (
         <FormularioRecepcion
           ordenSeleccionada={ordenSeleccionada}
           recepcionProductos={recepcionProductos}
@@ -4510,10 +4673,10 @@ const ReporteStockActual = () => {
           procesando={procesando}
           usuarioActual={usuarioActual}
           refrescarDatosModalRecepcion={refrescarDatosModalRecepcion}
-        />
-      )}
-    </div>
-  );
-};
-
-export default ReporteStockActual;
+          />
+        )}
+      </div>
+    );
+  };
+  
+  export default GestionSuministros;

@@ -1,0 +1,51 @@
+
+{
+  "indexes": [
+    {
+      "collectionGroup": "tareas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "equipoId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "frecuencia",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "descripcion",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "registros",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "equipoId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "fecha",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "tareas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "equipoId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "descripcion",
+          "order": "ASCENDING"
+        }
+      ]
+    }
+  ]
+}

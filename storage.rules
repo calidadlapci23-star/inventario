@@ -1,0 +1,12 @@
+rules_version = '2';
+
+// Advertencia: Estas reglas son permisivas y permiten que cualquiera lea y escriba.
+// Son adecuadas para el desarrollo inicial, pero deben ser aseguradas para producción,
+// por ejemplo, requiriendo autenticación (`request.auth != null`).
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read, write;
+    }
+  }
+}

@@ -9,10 +9,7 @@ type User = {
   displayName: string | undefined;
 };
 
-const initialState = {
-  message: '',
-  error: '',
-};
+const initialState: { message?: string; error?: string } = {};
 
 function SubmitButton() {
   const { pending } = useFormStatus();

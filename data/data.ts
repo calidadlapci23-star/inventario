@@ -69,3 +69,31 @@ export const priorities = [
     icon: ArrowUpToLine,
   },
 ]
+
+export const DISCIPLINAS = [
+  {
+    label: "Hematología",
+    value: "hematologia",
+    emoji: "🩸",
+  },
+  {
+    label: "Química Clínica",
+    value: "quimica-clinica",
+    emoji: "🧪",
+  },
+  {
+    label: "Microbiología",
+    value: "microbiologia",
+    emoji: "🔬",
+  },
+  {
+    label: "Inmunología",
+    value: "inmunologia",
+    emoji: "🧬",
+  },
+  {
+    label: "Uroanálisis",
+    value: "uroanalisis",
+    emoji: "💧",
+  },
+];

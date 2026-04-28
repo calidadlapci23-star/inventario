@@ -4,7 +4,9 @@ import { useState, useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
-import { createClient } from '@/lib/supabase/client' // CAMBIO
+import { db, auth } from '@/lib/firebase' // CAMBIO: Usar Firebase
+import { collection, query, where, getDocs, limit } from 'firebase/firestore'
+import { onAuthStateChanged } from 'firebase/auth'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { AlertCircle, CheckCircle, Package } from 'lucide-react'
@@ -40,7 +42,6 @@ interface ConsumoFormProps {
 }
 
 export function ConsumoForm({ producto, onSuccess }: ConsumoFormProps) {
-  const supabase = createClient() // CAMBIO
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -60,16 +61,15 @@ export function ConsumoForm({ producto, onSuccess }: ConsumoFormProps) {
   const cantidad = watch('cantidad')
 
   useEffect(() => {
-    // Obtener usuario actual
-    const cargarUsuario = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
+    // Obtener usuario actual con Firebase Auth
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
         setUsuarioActual(user.email || 'Usuario')
         setValue('usuario', user.email || 'Usuario')
       }
-    }
-    cargarUsuario()
-  }, [setValue, supabase]) // CAMBIO: añadir supabase a las dependencias
+    })
+    return () => unsubscribe()
+  }, [setValue])
 
   useEffect(() => {
     // Actualizar lote seleccionado
@@ -85,19 +85,20 @@ export function ConsumoForm({ producto, onSuccess }: ConsumoFormProps) {
     setSuccess(false)
 
     const verificarPrimerUsoLote = async (loteId: string): Promise<boolean> => {
-      const { data, error } = await supabase
-        .from('movimientos')
-        .select('id')
-        .eq('lote_id', loteId)
-        .eq('tipo', 'consumo')
-        .limit(1)
-  
-      if (error) {
-        console.error('Error verificando uso de lote:', error)
+      try {
+        const movimientosRef = collection(db, 'movimientos')
+        const q = query(
+          movimientosRef, 
+          where('lote_id', '==', loteId), 
+          where('tipo', '==', 'consumo'), 
+          limit(1)
+        )
+        const querySnapshot = await getDocs(q)
+        return querySnapshot.empty // Si no hay consumos previos, es primera vez
+      } catch (err) {
+        console.error('Error verificando uso de lote:', err)
         return false
       }
-  
-      return data.length === 0 // Si no hay consumos previos, es primera vez
     }
 
     try {

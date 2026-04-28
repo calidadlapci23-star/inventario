@@ -1,798 +1,709 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { db } from '@/lib/firebase';
-import { 
-  collection, query, where, getDocs, orderBy, 
-  Timestamp, limit as firestoreLimit
+import {
+  collection,
+  getDocs,
+  query,
+  orderBy,
+  Timestamp,
+  limit,
+  where,
 } from 'firebase/firestore';
-import { useRouter } from 'next/navigation';
-import toast from 'react-hot-toast';
-import dynamic from 'next/dynamic';
-import { 
-  Download, RefreshCw, Search, Filter, 
-  Calendar, FileText, ChevronDown, ChevronUp,
-  Loader2, TrendingUp, TrendingDown, Printer,
-  Eye, EyeOff
+import {
+  Calendar,
+  Package,
+  TrendingDown,
+  Truck,
+  Search,
+  Filter,
+  Download,
+  RefreshCw,
+  AlertCircle,
+  CheckCircle,
+  XCircle,
+  TestTube,
+  FileText,
+  Info,
 } from 'lucide-react';
-import * as XLSX from 'xlsx';
 
-const Toaster = dynamic(
-  () => import('react-hot-toast').then((mod) => mod.Toaster),
-  { ssr: false }
-);
-
-// Interfaces
-interface Movimiento {
+// Interfaces para cada tipo de movimiento (actualizadas)
+interface MovimientoConsumo {
   id: string;
-  tipo: 'RECEPCION' | 'CONSUMO' | 'CIERRE_LOTE' | 'APERTURA_LOTE' | 'AJUSTE';
+  tipo: 'CONSUMO';
   producto_id: string;
   producto_nombre: string;
-  codigo_producto: string;
-  disciplina: string;
-  fabricante: string;
+  cantidad: number;
+  unidad: string;
+  desglose: {
+    px: number;
+    control: number;
+    calibrador: number;
+    merma: number;
+  };
+  stock_anterior: number;
+  stock_nuevo: number;
+  proveedor: string;
+  usuario: string;
+  observaciones: string;
+  fecha: Timestamp;
+  fecha_consumo?: Date;
+  agotado?: boolean;
+  // Nuevos campos para cierre/apertura de lote
+  lote_actual?: string;
+  lote_cerrado?: string;
+  responsable_cierre?: string;
+  responsable_apertura?: string;
+  observaciones_lote?: string;
+  datos_confirmados?: boolean;
+}
+
+interface MovimientoRecepcion {
+  id: string;
+  tipo: 'RECEPCION';
+  producto_id: string;
+  producto_nombre: string;
   cantidad: number;
   unidad: string;
   stock_anterior: number;
   stock_nuevo: number;
   numero_lote?: string;
   fecha_vencimiento?: string;
+  pruebas?: number;
+  pruebas_por_caja?: number;
+  orden_compra?: string;   // <-- Nuevo campo
+  factura?: string;
+  proveedor: string;
   usuario: string;
   observaciones: string;
-  fecha: any;
-  created_at: any;
-  lote_id?: string;
-  lote_numero?: string;
+  fecha: Timestamp;
+  fecha_recepcion?: Date;
+}
+
+interface MovimientoInventario {
+  id: string;
+  productoId: string;
+  productoNombre: string;
+  tipo: 'recepcion' | 'ajuste' | 'consumo'; // Se mapeará según el documento
+  cantidad: number;
+  pruebas_por_caja?: number;
+  total_unidades: number;
+  stockAnterior: number;
+  stockNuevo: number;
+  referencia?: string;
+  numeroFactura?: string;
+  usuario: string;
+  fecha: Timestamp;
+  observaciones: string;
+  lote?: string;
+  fecha_vencimiento?: string;
+  // Posiblemente orden de compra también
   orden_compra?: string;
+}
+
+// Tipo unificado para mostrar en el reporte
+interface MovimientoUnificado {
+  id: string;
+  fecha: Date;
+  tipo: string; // 'CONSUMO', 'RECEPCION', 'RECEPCION_SUMINISTROS', 'AJUSTE', etc.
+  producto: string;
+  cantidad: number;
+  unidad: string;
+  stockAnterior: number;
+  stockNuevo: number;
+  proveedor: string;
+  lote?: string;
   factura?: string;
-  proveedor?: string;
-  pruebas?: number;
-  desglose?: {
-    px?: number;
-    control?: number;
-    calibrador?: number;
-    merma?: number;
+  pruebasPorCaja?: number;
+  ordenCompra?: string;   // <-- Nuevo campo unificado
+  observaciones: string;
+  usuario: string;
+  fuente: string; // colección origen
+  // Campos adicionales para detalles (se mostrarán en tooltip)
+  detalles?: {
+    desglose?: { px: number; control: number; calibrador: number; merma: number };
+    responsableCierre?: string;
+    responsableApertura?: string;
+    loteCerrado?: string;
+    observacionesLote?: string;
+    fechaVencimiento?: string;
   };
 }
 
-interface Filtros {
-  fechaInicio: string;
-  fechaFin: string;
-  disciplina: string;
-  tipoMovimiento: string;
-  busqueda: string;
-  usuario: string;
-  producto: string;
-}
+export default function ReporteMovimientos() {
+  const [movimientos, setMovimientos] = useState<MovimientoUnificado[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-interface Estadisticas {
-  totalMovimientos: number;
-  recepciones: number;
-  consumos: number;
-  ajustes: number;
-  lotesCerrados: number;
-  lotesAbiertos: number;
-  cantidadTotal: number;
-  productosDiferentes: number;
-}
+  // Filtros
+  const [fechaInicio, setFechaInicio] = useState<string>(
+    new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split('T')[0]
+  );
+  const [fechaFin, setFechaFin] = useState<string>(
+    new Date().toISOString().split('T')[0]
+  );
+  const [tipoFiltro, setTipoFiltro] = useState<string>('todos');
+  const [busqueda, setBusqueda] = useState<string>('');
+  const [proveedorFiltro, setProveedorFiltro] = useState<string>('');
 
-// Opciones para filtros
-const DISCIPLINAS = [
-  { value: '', label: 'Todas las disciplinas' },
-  { value: 'QUIMICA_CLINICA', label: 'Química Clínica' },
-  { value: 'INMUNOLOGIA', label: 'Inmunología' },
-  { value: 'BACTERIOLOGIA', label: 'Bacteriología' },
-  { value: 'PRUEBAS_RAPIDAS', label: 'Pruebas Rápidas' },
-  { value: 'TOMA_MUESTRA', label: 'Toma de Muestra' },
-  { value: 'HEMATOLOGIA', label: 'Hematología' },
-  { value: 'COAGULACION', label: 'Coagulación' },
-  { value: 'MOLECULAR', label: 'Molecular' },
-  { value: 'UROANALISIS', label: 'Uroanálisis' },
-];
+  const [refrescando, setRefrescando] = useState(false);
 
-const TIPOS_MOVIMIENTO = [
-  { value: '', label: 'Todos los tipos' },
-  { value: 'RECEPCION', label: 'Recepción' },
-  { value: 'CONSUMO', label: 'Consumo' },
-  { value: 'CIERRE_LOTE', label: 'Cierre de Lote' },
-  { value: 'APERTURA_LOTE', label: 'Apertura de Lote' },
-  { value: 'AJUSTE', label: 'Ajuste' },
-];
+  const tipos = ['todos', 'CONSUMO', 'RECEPCION', 'RECEPCION_SUMINISTROS', 'AJUSTE'];
 
-interface ReporteMovimientosProps {
-  tipo?: 'general' | 'dia';
-}
-
-export default function ReporteMovimientos({ tipo = 'general' }: ReporteMovimientosProps) {
-  const router = useRouter();
-  
-  // Estado para datos
-  const [movimientos, setMovimientos] = useState<Movimiento[]>([]);
-  const [movimientosFiltrados, setMovimientosFiltrados] = useState<Movimiento[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [estadisticas, setEstadisticas] = useState<Estadisticas>({
-    totalMovimientos: 0,
-    recepciones: 0,
-    consumos: 0,
-    ajustes: 0,
-    lotesCerrados: 0,
-    lotesAbiertos: 0,
-    cantidadTotal: 0,
-    productosDiferentes: 0
-  });
-
-  // Estado para filtros
-  const [filtros, setFiltros] = useState<Filtros>({
-    fechaInicio: tipo === 'dia' 
-      ? new Date().toISOString().split('T')[0] 
-      : (() => {
-          const date = new Date();
-          date.setDate(date.getDate() - 30);
-          return date.toISOString().split('T')[0];
-        })(),
-    fechaFin: new Date().toISOString().split('T')[0],
-    disciplina: '',
-    tipoMovimiento: '',
-    busqueda: '',
-    usuario: '',
-    producto: ''
-  });
-
-  // Estado para UI
-  const [mostrarFiltrosAvanzados, setMostrarFiltrosAvanzados] = useState(false);
-  const [detallesExpandidos, setDetallesExpandidos] = useState<Record<string, boolean>>({});
-  const [paginaActual, setPaginaActual] = useState(1);
-  const [itemsPorPagina, setItemsPorPagina] = useState(20);
-  const [ordenarPor, setOrdenarPor] = useState<'fecha' | 'producto' | 'tipo' | 'cantidad'>('fecha');
-  const [ordenAscendente, setOrdenAscendente] = useState(false);
-
-  // Cargar movimientos
-  const cargarMovimientos = useCallback(async () => {
+  const cargarMovimientos = async () => {
+    setLoading(true);
+    setError(null);
     try {
-      setLoading(true);
+      // Convertir fechas a Timestamps para la consulta
+      const inicio = Timestamp.fromDate(new Date(fechaInicio));
+      const fin = Timestamp.fromDate(new Date(new Date(fechaFin).setHours(23, 59, 59, 999)));
 
-      // Construir query base
-      let q = query(
-        collection(db, 'movimientos'),
-        orderBy('fecha', 'desc')
+      // 1. Consultar movimientos (colección principal) con filtro de fecha
+      const movimientosRef = collection(db, 'movimientos');
+      const qMovimientos = query(
+        movimientosRef,
+        where('fecha', '>=', inicio),
+        where('fecha', '<=', fin),
+        orderBy('fecha', 'desc'),
+        limit(1000)
       );
+      const snapshotMovimientos = await getDocs(qMovimientos);
+      console.log(`📦 Movimientos encontrados: ${snapshotMovimientos.size}`);
 
-      // Aplicar filtro de fecha
-      if (filtros.fechaInicio && filtros.fechaFin) {
-        const fechaInicioTimestamp = Timestamp.fromDate(new Date(filtros.fechaInicio));
-        const fechaFinTimestamp = Timestamp.fromDate(new Date(filtros.fechaFin + 'T23:59:59'));
-        
-        q = query(
-          q,
-          where('fecha', '>=', fechaInicioTimestamp),
-          where('fecha', '<=', fechaFinTimestamp)
-        );
-      }
+      const movimientosData = snapshotMovimientos.docs.map((doc) => {
+        const data = doc.data();
+        // 🔥 Eliminar cualquier campo 'id' interno que pueda sobrescribir el ID real
+        const { id: _, ...dataSinId } = data;
+        // Asegurar que fecha sea Date
+        const fecha = data.fecha?.toDate?.() || new Date();
 
-      // Ejecutar query
-      const snapshot = await getDocs(q);
+        if (data.tipo === 'CONSUMO') {
+          const detalles: any = {};
+          if (data.desglose) detalles.desglose = data.desglose;
+          if (data.responsable_cierre) detalles.responsableCierre = data.responsable_cierre;
+          if (data.responsable_apertura) detalles.responsableApertura = data.responsable_apertura;
+          if (data.lote_cerrado) detalles.loteCerrado = data.lote_cerrado;
+          if (data.observaciones_lote) detalles.observacionesLote = data.observaciones_lote;
 
-      if (snapshot.empty) {
-        setMovimientos([]);
-        setMovimientosFiltrados([]);
-        toast.success('No se encontraron movimientos para el período seleccionado');
-        return;
-      }
+          return {
+            id: doc.id,
+            fecha,
+            tipo: 'CONSUMO',
+            producto: data.producto_nombre || 'Sin nombre',
+            cantidad: data.cantidad || 0,
+            unidad: data.unidad || 'unidades',
+            stockAnterior: data.stock_anterior || 0,
+            stockNuevo: data.stock_nuevo || 0,
+            proveedor: data.proveedor || 'N/A',
+            lote: data.lote_actual || '',
+            factura: '',
+            pruebasPorCaja: undefined,
+            ordenCompra: '',
+            observaciones: data.observaciones || '',
+            usuario: data.usuario || 'Sistema',
+            fuente: 'movimientos',
+            detalles: Object.keys(detalles).length > 0 ? detalles : undefined,
+          } as MovimientoUnificado;
+        } else if (data.tipo === 'RECEPCION') {
+          return {
+            id: doc.id,
+            fecha,
+            tipo: 'RECEPCION',
+            producto: data.producto_nombre || 'Sin nombre',
+            cantidad: data.cantidad || 0,
+            unidad: data.unidad || 'unidades',
+            stockAnterior: data.stock_anterior || 0,
+            stockNuevo: data.stock_nuevo || 0,
+            proveedor: data.proveedor || 'N/A',
+            lote: data.numero_lote || '',
+            factura: data.factura || '',
+            pruebasPorCaja: data.pruebas_por_caja || undefined,
+            ordenCompra: data.orden_compra || '',
+            observaciones: data.observaciones || '',
+            usuario: data.usuario || 'Sistema',
+            fuente: 'movimientos',
+            detalles: data.fecha_vencimiento ? { fechaVencimiento: data.fecha_vencimiento } : undefined,
+          } as MovimientoUnificado;
+        }
+        return null;
+      }).filter(Boolean) as MovimientoUnificado[];
 
-      // Procesar datos
-      const datos: Movimiento[] = snapshot.docs.map(docSnap => {
-        const data = docSnap.data();
+      // 2. Consultar movimientos_inventario con filtro de fecha
+      const inventarioRef = collection(db, 'movimientos_inventario');
+      const qInventario = query(
+        inventarioRef,
+        where('fecha', '>=', inicio),
+        where('fecha', '<=', fin),
+        orderBy('fecha', 'desc'),
+        limit(1000)
+      );
+      const snapshotInventario = await getDocs(qInventario);
+      console.log(`📦 movimientos_inventario encontrados: ${snapshotInventario.size}`);
+
+      const inventarioData = snapshotInventario.docs.map((doc) => {
+        const data = doc.data();
+        // 🔥 Eliminar cualquier campo 'id' interno que pueda sobrescribir el ID real
+        const { id: _, ...dataSinId } = data;
+        const fecha = data.fecha?.toDate?.() || new Date();
+        let tipoUnificado = 'RECEPCION_SUMINISTROS';
+        if (data.tipo === 'ajuste') tipoUnificado = 'AJUSTE';
+        else if (data.tipo === 'consumo') tipoUnificado = 'CONSUMO_SUMINISTROS';
+        else if (data.tipo === 'recepcion') tipoUnificado = 'RECEPCION_SUMINISTROS';
+
         return {
-          ...data,
-          id: docSnap.id,
-          fecha: data.fecha?.toDate() || new Date(),
-        } as Movimiento;
+          id: doc.id,
+          fecha,
+          tipo: tipoUnificado,
+          producto: data.productoNombre || 'Sin nombre',
+          cantidad: data.total_unidades || data.cantidad || 0,
+          unidad: 'pruebas',
+          stockAnterior: data.stockAnterior || 0,
+          stockNuevo: data.stockNuevo || 0,
+          proveedor: data.proveedor || 'N/A',
+          lote: data.lote || '',
+          factura: data.numeroFactura || '',
+          pruebasPorCaja: data.pruebas_por_caja || undefined,
+          ordenCompra: data.orden_compra || '',
+          observaciones: data.observaciones || '',
+          usuario: data.usuario || 'Sistema',
+          fuente: 'movimientos_inventario',
+          detalles: data.fecha_vencimiento ? { fechaVencimiento: data.fecha_vencimiento } : undefined,
+        } as MovimientoUnificado;
       });
 
-      setMovimientos(datos);
-      setMovimientosFiltrados(datos);
-      
-      // Calcular estadísticas
-      calcularEstadisticas(datos);
-
-      toast.success(`${datos.length} movimientos cargados`);
-
-    } catch (error) {
-      console.error('Error cargando movimientos:', error);
-      toast.error('Error al cargar los movimientos');
+      const todos = [...movimientosData, ...inventarioData];
+      // Ordenar por fecha descendente (por si acaso)
+      todos.sort((a, b) => b.fecha.getTime() - a.fecha.getTime());
+      setMovimientos(todos);
+    } catch (err: any) {
+      console.error('Error cargando movimientos:', err);
+      setError('No se pudieron cargar los movimientos. Verifica tu conexión e inténtalo de nuevo.');
     } finally {
       setLoading(false);
+      setRefrescando(false);
     }
-  }, [filtros.fechaInicio, filtros.fechaFin]);
-
-  // Calcular estadísticas
-  const calcularEstadisticas = (datos: Movimiento[]) => {
-    const estadisticas: Estadisticas = {
-      totalMovimientos: datos.length,
-      recepciones: datos.filter(m => m.tipo === 'RECEPCION').length,
-      consumos: datos.filter(m => m.tipo === 'CONSUMO').length,
-      ajustes: datos.filter(m => m.tipo === 'AJUSTE').length,
-      lotesCerrados: datos.filter(m => m.tipo === 'CIERRE_LOTE').length,
-      lotesAbiertos: datos.filter(m => m.tipo === 'APERTURA_LOTE').length,
-      cantidadTotal: datos.reduce((sum, m) => sum + Math.abs(m.cantidad), 0),
-      productosDiferentes: new Set(datos.map(m => m.producto_id)).size
-    };
-    
-    setEstadisticas(estadisticas);
   };
 
-  // Aplicar filtros
-  useEffect(() => {
-    let resultados = [...movimientos];
-
-    // Aplicar filtro por disciplina
-    if (filtros.disciplina) {
-      resultados = resultados.filter(m => m.disciplina === filtros.disciplina);
-    }
-
-    // Aplicar filtro por tipo de movimiento
-    if (filtros.tipoMovimiento) {
-      resultados = resultados.filter(m => m.tipo === filtros.tipoMovimiento);
-    }
-
-    // Aplicar filtro de búsqueda
-    if (filtros.busqueda) {
-      const busquedaLower = filtros.busqueda.toLowerCase();
-      resultados = resultados.filter(m =>
-        m.producto_nombre.toLowerCase().includes(busquedaLower) ||
-        m.codigo_producto.toLowerCase().includes(busquedaLower) ||
-        m.usuario.toLowerCase().includes(busquedaLower) ||
-        m.observaciones?.toLowerCase().includes(busquedaLower) ||
-        m.numero_lote?.toLowerCase().includes(busquedaLower)
-      );
-    }
-
-    // Aplicar ordenamiento
-    resultados.sort((a, b) => {
-      let valorA: any, valorB: any;
-      
-      switch (ordenarPor) {
-        case 'fecha':
-          valorA = a.fecha;
-          valorB = b.fecha;
-          break;
-        case 'producto':
-          valorA = a.producto_nombre;
-          valorB = b.producto_nombre;
-          break;
-        case 'tipo':
-          valorA = a.tipo;
-          valorB = b.tipo;
-          break;
-        case 'cantidad':
-          valorA = Math.abs(a.cantidad);
-          valorB = Math.abs(b.cantidad);
-          break;
-        default:
-          return 0;
-      }
-      
-      if (ordenAscendente) {
-        return valorA > valorB ? 1 : -1;
-      } else {
-        return valorA < valorB ? 1 : -1;
-      }
-    });
-
-    setMovimientosFiltrados(resultados);
-    setPaginaActual(1);
-  }, [movimientos, filtros, ordenarPor, ordenAscendente]);
-
-  // Cargar datos iniciales
   useEffect(() => {
     cargarMovimientos();
-  }, []);
+  }, [fechaInicio, fechaFin]); // Recargar cuando cambien las fechas
 
-  // Exportar a Excel
-  const exportarExcel = () => {
-    try {
-      const datosExportar = movimientosFiltrados.map(mov => ({
-        'Fecha': mov.fecha.toLocaleString(),
-        'Producto': mov.producto_nombre,
-        'Código': mov.codigo_producto,
-        'Tipo': mov.tipo,
-        'Cantidad': mov.cantidad,
-        'Unidad': mov.unidad,
-        'Stock Anterior': mov.stock_anterior,
-        'Stock Nuevo': mov.stock_nuevo,
-        'Lote': mov.numero_lote || 'N/A',
-        'Usuario': mov.usuario,
-        'Observaciones': mov.observaciones || '',
-        'Disciplina': mov.disciplina,
-        'Proveedor': mov.proveedor || 'N/A',
-        'Factura': mov.factura || 'N/A'
-      }));
-
-      const worksheet = XLSX.utils.json_to_sheet(datosExportar);
-      const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(workbook, worksheet, 'Movimientos');
-      
-      const nombreArchivo = tipo === 'dia' 
-        ? `movimientos_dia_${new Date().toISOString().split('T')[0]}.xlsx`
-        : `movimientos_${filtros.fechaInicio}_a_${filtros.fechaFin}.xlsx`;
-      
-      XLSX.writeFile(workbook, nombreArchivo);
-      toast.success('Archivo exportado correctamente');
-    } catch (error) {
-      console.error('Error exportando Excel:', error);
-      toast.error('Error al exportar el archivo');
-    }
+  const handleRefresh = () => {
+    setRefrescando(true);
+    cargarMovimientos();
   };
 
-  // Imprimir reporte
-  const imprimirReporte = () => {
-    window.print();
+  // Obtener lista única de proveedores para el filtro
+  const proveedoresUnicos = useMemo(() => {
+    const proveedores = movimientos.map((m) => m.proveedor).filter(Boolean);
+    return [...new Set(proveedores)].sort();
+  }, [movimientos]);
+
+  // Filtrar movimientos
+  const movimientosFiltrados = useMemo(() => {
+    return movimientos.filter((mov) => {
+      // Filtro por tipo
+      if (tipoFiltro !== 'todos' && mov.tipo !== tipoFiltro) return false;
+
+      // Búsqueda por texto (producto, observaciones, lote, factura, ordenCompra)
+      if (busqueda) {
+        const texto = busqueda.toLowerCase();
+        if (
+          !mov.producto.toLowerCase().includes(texto) &&
+          !mov.observaciones.toLowerCase().includes(texto) &&
+          !(mov.lote && mov.lote.toLowerCase().includes(texto)) &&
+          !(mov.factura && mov.factura.toLowerCase().includes(texto)) &&
+          !(mov.ordenCompra && mov.ordenCompra.toLowerCase().includes(texto))
+        ) {
+          return false;
+        }
+      }
+
+      // Filtro por proveedor
+      if (proveedorFiltro && mov.proveedor !== proveedorFiltro) return false;
+
+      return true;
+    });
+  }, [movimientos, tipoFiltro, busqueda, proveedorFiltro]);
+
+  // Calcular totales
+  const totales = useMemo(() => {
+    let consumos = 0;
+    let recepciones = 0;
+    let recepcionesSum = 0;
+    let ajustes = 0;
+    let cantidadTotal = 0;
+
+    movimientosFiltrados.forEach((mov) => {
+      if (mov.tipo === 'CONSUMO') {
+        consumos += mov.cantidad;
+      } else if (mov.tipo === 'RECEPCION') {
+        recepciones += mov.cantidad;
+      } else if (mov.tipo === 'RECEPCION_SUMINISTROS') {
+        recepcionesSum += mov.cantidad;
+      } else if (mov.tipo === 'AJUSTE') {
+        ajustes += mov.cantidad;
+      }
+      cantidadTotal += mov.cantidad;
+    });
+
+    return {
+      consumos,
+      recepciones,
+      recepcionesSum,
+      ajustes,
+      cantidadTotal,
+      count: movimientosFiltrados.length,
+    };
+  }, [movimientosFiltrados]);
+
+  // Función para exportar a CSV
+  const exportarCSV = () => {
+    const headers = [
+      'Fecha', 'Tipo', 'Producto', 'Cantidad', 'Unidad',
+      'Stock Ant.', 'Stock Nuevo', 'Proveedor', 'Lote', 'Factura',
+      'Orden Compra', 'Pruebas/Caja', 'Observaciones', 'Usuario',
+      'Detalles'
+    ];
+    const rows = movimientosFiltrados.map((mov) => {
+      let detallesStr = '';
+      if (mov.detalles) {
+        const parts = [];
+        if (mov.detalles.desglose) {
+          parts.push(`PX:${mov.detalles.desglose.px} Ctrl:${mov.detalles.desglose.control} Cal:${mov.detalles.desglose.calibrador} Merma:${mov.detalles.desglose.merma}`);
+        }
+        if (mov.detalles.responsableCierre) parts.push(`Cierra:${mov.detalles.responsableCierre}`);
+        if (mov.detalles.responsableApertura) parts.push(`Abre:${mov.detalles.responsableApertura}`);
+        if (mov.detalles.loteCerrado) parts.push(`Lote Cerrado:${mov.detalles.loteCerrado}`);
+        if (mov.detalles.observacionesLote) parts.push(`Obs Lote:${mov.detalles.observacionesLote}`);
+        if (mov.detalles.fechaVencimiento) parts.push(`Vence:${mov.detalles.fechaVencimiento}`);
+        detallesStr = parts.join(' | ');
+      }
+      return [
+        mov.fecha.toLocaleDateString(),
+        mov.tipo,
+        mov.producto,
+        mov.cantidad,
+        mov.unidad,
+        mov.stockAnterior,
+        mov.stockNuevo,
+        mov.proveedor,
+        mov.lote || '',
+        mov.factura || '',
+        mov.ordenCompra || '',
+        mov.pruebasPorCaja || '',
+        mov.observaciones,
+        mov.usuario,
+        detallesStr,
+      ];
+    });
+
+    const csv = [headers, ...rows].map((row) => row.map(cell => `"${cell}"`).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `movimientos_${new Date().toISOString().split('T')[0]}.csv`;
+    link.click();
   };
 
-  // Toggle detalles expandidos
-  const toggleDetalles = (id: string) => {
-    setDetallesExpandidos(prev => ({
-      ...prev,
-      [id]: !prev[id]
-    }));
-  };
-
-  // Obtener color según tipo de movimiento
-  const getColorTipo = (tipo: string) => {
-    switch (tipo) {
-      case 'RECEPCION':
-        return 'text-green-600 bg-green-50 border-green-200';
-      case 'CONSUMO':
-        return 'text-red-600 bg-red-50 border-red-200';
-      case 'APERTURA_LOTE':
-        return 'text-blue-600 bg-blue-50 border-blue-200';
-      case 'CIERRE_LOTE':
-        return 'text-orange-600 bg-orange-50 border-orange-200';
-      case 'AJUSTE':
-        return 'text-purple-600 bg-purple-50 border-purple-200';
-      default:
-        return 'text-gray-600 bg-gray-50 border-gray-200';
-    }
-  };
-
-  // Obtener icono según tipo
-  const getIconoTipo = (tipo: string) => {
-    switch (tipo) {
-      case 'RECEPCION':
-        return <TrendingUp className="w-4 h-4" />;
-      case 'CONSUMO':
-        return <TrendingDown className="w-4 h-4" />;
-      case 'APERTURA_LOTE':
-        return <ChevronUp className="w-4 h-4" />;
-      case 'CIERRE_LOTE':
-        return <ChevronDown className="w-4 h-4" />;
-      default:
-        return <FileText className="w-4 h-4" />;
-    }
-  };
-
-  // Calcular paginación
-  const totalPaginas = Math.ceil(movimientosFiltrados.length / itemsPorPagina);
-  const indiceInicio = (paginaActual - 1) * itemsPorPagina;
-  const indiceFin = indiceInicio + itemsPorPagina;
-  const movimientosPaginados = movimientosFiltrados.slice(indiceInicio, indiceFin);
+  if (loading && !refrescando) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
+          <p className="mt-4 text-gray-600">Cargando movimientos...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="p-4 sm:p-6">
-      <Toaster position="top-right" />
-      
-      {/* Encabezado */}
-      <div className="mb-6">
-        <h2 className="text-2xl font-bold text-gray-800">
-          {tipo === 'dia' ? 'Movimientos del Día' : 'Reporte de Movimientos'}
-        </h2>
-        <p className="text-gray-600">
-          {tipo === 'dia' 
-            ? `Mostrando movimientos del ${new Date().toLocaleDateString()}`
-            : `Período: ${filtros.fechaInicio} al ${filtros.fechaFin}`
-          }
-        </p>
-      </div>
-
-      {/* Tarjetas de estadísticas */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <div className="bg-white p-4 rounded-lg shadow border">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-500">Total Movimientos</p>
-              <p className="text-2xl font-bold">{estadisticas.totalMovimientos}</p>
-            </div>
-            <div className="bg-blue-100 p-2 rounded-full">
-              <FileText className="w-6 h-6 text-blue-600" />
-            </div>
+    <div className="p-4 sm:p-6 bg-gray-50 min-h-screen">
+      <div className="max-w-7xl mx-auto">
+        {/* Cabecera */}
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+          <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
+            <FileText className="w-6 h-6 text-blue-600" />
+            Reporte de Movimientos de Inventario
+          </h1>
+          <div className="flex gap-2">
+            <button
+              onClick={handleRefresh}
+              disabled={refrescando}
+              className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 flex items-center gap-2 disabled:opacity-50"
+            >
+              <RefreshCw className={`w-4 h-4 ${refrescando ? 'animate-spin' : ''}`} />
+              Actualizar
+            </button>
+            <button
+              onClick={exportarCSV}
+              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2"
+            >
+              <Download className="w-4 h-4" />
+              Exportar CSV
+            </button>
           </div>
         </div>
 
-        <div className="bg-white p-4 rounded-lg shadow border">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-500">Recepciones</p>
-              <p className="text-2xl font-bold text-green-600">{estadisticas.recepciones}</p>
-            </div>
-            <div className="bg-green-100 p-2 rounded-full">
-              <TrendingUp className="w-6 h-6 text-green-600" />
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white p-4 rounded-lg shadow border">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-500">Consumos</p>
-              <p className="text-2xl font-bold text-red-600">{estadisticas.consumos}</p>
-            </div>
-            <div className="bg-red-100 p-2 rounded-full">
-              <TrendingDown className="w-6 h-6 text-red-600" />
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white p-4 rounded-lg shadow border">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-500">Cantidad Total</p>
-              <p className="text-2xl font-bold">{estadisticas.cantidadTotal}</p>
-            </div>
-            <div className="bg-purple-100 p-2 rounded-full">
-              <Filter className="w-6 h-6 text-purple-600" />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Filtros principales */}
-      <div className="bg-white p-4 rounded-lg shadow-md mb-6">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold flex items-center gap-2">
+        {/* Filtros */}
+        <div className="bg-white rounded-lg shadow p-6 mb-6">
+          <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
             <Filter className="w-5 h-5" />
             Filtros
-          </h3>
-          <button
-            onClick={() => setMostrarFiltrosAvanzados(!mostrarFiltrosAvanzados)}
-            className="text-sm text-blue-600 hover:text-blue-800 flex items-center gap-1"
-          >
-            {mostrarFiltrosAvanzados ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-            Filtros avanzados
-          </button>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
-          {/* Fecha inicio */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Fecha Inicio
-            </label>
-            <input
-              type="date"
-              value={filtros.fechaInicio}
-              onChange={(e) => setFiltros(prev => ({ ...prev, fechaInicio: e.target.value }))}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-
-          {/* Fecha fin */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Fecha Fin
-            </label>
-            <input
-              type="date"
-              value={filtros.fechaFin}
-              onChange={(e) => setFiltros(prev => ({ ...prev, fechaFin: e.target.value }))}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-
-          {/* Disciplina */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Disciplina
-            </label>
-            <select
-              value={filtros.disciplina}
-              onChange={(e) => setFiltros(prev => ({ ...prev, disciplina: e.target.value }))}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              {DISCIPLINAS.map(disciplina => (
-                <option key={disciplina.value} value={disciplina.value}>
-                  {disciplina.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Tipo de movimiento */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Tipo de Movimiento
-            </label>
-            <select
-              value={filtros.tipoMovimiento}
-              onChange={(e) => setFiltros(prev => ({ ...prev, tipoMovimiento: e.target.value }))}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              {TIPOS_MOVIMIENTO.map(tipo => (
-                <option key={tipo.value} value={tipo.value}>
-                  {tipo.label}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        {/* Filtros avanzados */}
-        {mostrarFiltrosAvanzados && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4 pt-4 border-t">
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Búsqueda
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Fecha inicio</label>
               <input
-                type="text"
-                placeholder="Buscar por producto, lote, usuario..."
-                value={filtros.busqueda}
-                onChange={(e) => setFiltros(prev => ({ ...prev, busqueda: e.target.value }))}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                type="date"
+                value={fechaInicio}
+                onChange={(e) => setFechaInicio(e.target.value)}
+                className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
               />
             </div>
-
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Usuario
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Fecha fin</label>
               <input
-                type="text"
-                placeholder="Filtrar por usuario..."
-                value={filtros.usuario}
-                onChange={(e) => setFiltros(prev => ({ ...prev, usuario: e.target.value }))}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                type="date"
+                value={fechaFin}
+                onChange={(e) => setFechaFin(e.target.value)}
+                className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
               />
             </div>
-
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Producto
-              </label>
-              <input
-                type="text"
-                placeholder="Nombre del producto..."
-                value={filtros.producto}
-                onChange={(e) => setFiltros(prev => ({ ...prev, producto: e.target.value }))}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-          </div>
-        )}
-
-        {/* Botones de acción */}
-        <div className="flex flex-wrap gap-3 mt-6">
-          <button
-            onClick={cargarMovimientos}
-            disabled={loading}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
-          >
-            {loading ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <RefreshCw className="w-4 h-4" />
-            )}
-            Actualizar
-          </button>
-
-          <button
-            onClick={exportarExcel}
-            className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
-          >
-            <Download className="w-4 h-4" />
-            Exportar Excel
-          </button>
-
-          <button
-            onClick={imprimirReporte}
-            className="flex items-center gap-2 px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700"
-          >
-            <Printer className="w-4 h-4" />
-            Imprimir
-          </button>
-
-          <div className="ml-auto flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <label className="text-sm text-gray-600">Ordenar por:</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Tipo</label>
               <select
-                value={ordenarPor}
-                onChange={(e) => setOrdenarPor(e.target.value as any)}
-                className="px-2 py-1 border border-gray-300 rounded text-sm"
+                value={tipoFiltro}
+                onChange={(e) => setTipoFiltro(e.target.value)}
+                className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
               >
-                <option value="fecha">Fecha</option>
-                <option value="producto">Producto</option>
-                <option value="tipo">Tipo</option>
-                <option value="cantidad">Cantidad</option>
+                {tipos.map((t) => (
+                  <option key={t} value={t}>
+                    {t === 'todos' ? 'Todos' : t}
+                  </option>
+                ))}
               </select>
-              <button
-                onClick={() => setOrdenAscendente(!ordenAscendente)}
-                className="p-1 hover:bg-gray-100 rounded"
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Buscar</label>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <input
+                  type="text"
+                  value={busqueda}
+                  onChange={(e) => setBusqueda(e.target.value)}
+                  placeholder="Producto, lote, factura, OC, observaciones..."
+                  className="w-full pl-9 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Proveedor</label>
+              <select
+                value={proveedorFiltro}
+                onChange={(e) => setProveedorFiltro(e.target.value)}
+                className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
               >
-                {ordenAscendente ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                <option value="">Todos</option>
+                {proveedoresUnicos.map((prov) => (
+                  <option key={prov} value={prov}>
+                    {prov}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex items-end">
+              <button
+                onClick={() => {
+                  setFechaInicio(new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split('T')[0]);
+                  setFechaFin(new Date().toISOString().split('T')[0]);
+                  setTipoFiltro('todos');
+                  setBusqueda('');
+                  setProveedorFiltro('');
+                }}
+                className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
+              >
+                Limpiar filtros
               </button>
             </div>
+          </div>
+        </div>
 
-            <div className="flex items-center gap-2">
-              <label className="text-sm text-gray-600">Mostrar:</label>
-              <select
-                value={itemsPorPagina}
-                onChange={(e) => setItemsPorPagina(Number(e.target.value))}
-                className="px-2 py-1 border border-gray-300 rounded text-sm"
-              >
-                <option value={10}>10</option>
-                <option value={20}>20</option>
-                <option value={50}>50</option>
-                <option value={100}>100</option>
-              </select>
+        {/* Resumen */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4 mb-6">
+          <div className="bg-white rounded-lg shadow p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-600">Total movimientos</p>
+                <p className="text-2xl font-bold text-gray-800">{totales.count}</p>
+              </div>
+              <FileText className="w-8 h-8 text-blue-400" />
+            </div>
+          </div>
+          <div className="bg-white rounded-lg shadow p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-600">Consumos</p>
+                <p className="text-2xl font-bold text-red-600">{totales.consumos}</p>
+              </div>
+              <TrendingDown className="w-8 h-8 text-red-400" />
+            </div>
+          </div>
+          <div className="bg-white rounded-lg shadow p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-600">Recepciones</p>
+                <p className="text-2xl font-bold text-green-600">{totales.recepciones}</p>
+              </div>
+              <Truck className="w-8 h-8 text-green-400" />
+            </div>
+          </div>
+          <div className="bg-white rounded-lg shadow p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-600">Recepciones (Sum.)</p>
+                <p className="text-2xl font-bold text-purple-600">{totales.recepcionesSum}</p>
+              </div>
+              <Package className="w-8 h-8 text-purple-400" />
+            </div>
+          </div>
+          <div className="bg-white rounded-lg shadow p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-600">Ajustes</p>
+                <p className="text-2xl font-bold text-amber-600">{totales.ajustes}</p>
+              </div>
+              <TestTube className="w-8 h-8 text-amber-400" />
+            </div>
+          </div>
+          <div className="bg-white rounded-lg shadow p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-600">Cantidad total</p>
+                <p className="text-2xl font-bold text-blue-600">{totales.cantidadTotal}</p>
+              </div>
+              <TestTube className="w-8 h-8 text-blue-400" />
             </div>
           </div>
         </div>
-      </div>
 
-      {/* Resultados */}
-      <div className="bg-white rounded-lg shadow-md overflow-hidden">
-        {loading ? (
-          <div className="flex items-center justify-center h-64">
-            <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
-            <span className="ml-2 text-gray-600">Cargando movimientos...</span>
-          </div>
-        ) : movimientosFiltrados.length === 0 ? (
-          <div className="text-center py-12">
-            <FileText className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-            <p className="text-gray-500 text-lg">No se encontraron movimientos</p>
-            <p className="text-gray-400">Intenta ajustar los filtros o seleccionar otro período</p>
-          </div>
-        ) : (
-          <>
-            {/* Resumen */}
-            <div className="px-6 py-3 bg-gray-50 border-b">
-              <p className="text-sm text-gray-600">
-                Mostrando {indiceInicio + 1}-{Math.min(indiceFin, movimientosFiltrados.length)} de {movimientosFiltrados.length} movimientos
-              </p>
+        {/* Tabla de movimientos */}
+        <div className="bg-white rounded-lg shadow overflow-hidden">
+          {error ? (
+            <div className="p-8 text-center">
+              <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-3" />
+              <p className="text-red-600 font-medium">{error}</p>
+              <button
+                onClick={handleRefresh}
+                className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+              >
+                Reintentar
+              </button>
             </div>
-
-            {/* Tabla de movimientos */}
+          ) : movimientosFiltrados.length === 0 ? (
+            <div className="p-8 text-center">
+              <Package className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+              <p className="text-gray-600">No se encontraron movimientos con los filtros aplicados.</p>
+            </div>
+          ) : (
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Fecha
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Producto
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Tipo
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Lote
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Cantidad
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Stock
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Usuario
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Detalles
-                    </th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Fecha</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Tipo</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Producto</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Cantidad</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Stock Ant.</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Stock Nuevo</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Proveedor</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Lote</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Factura/OC</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Pruebas/Caja</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Observaciones</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Usuario</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Detalles</th>
                   </tr>
                 </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {movimientosPaginados.map((movimiento) => (
-                    <tr key={movimiento.id} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {movimiento.fecha.toLocaleDateString()} {movimiento.fecha.toLocaleTimeString()}
+                <tbody className="divide-y divide-gray-200">
+                  {movimientosFiltrados.map((mov) => (
+                    <tr key={`${mov.fuente}-${mov.id}`} className="hover:bg-gray-50">
+                      <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-700">
+                        {mov.fecha.toLocaleDateString()} {mov.fecha.toLocaleTimeString()}
                       </td>
-                      <td className="px-6 py-4">
-                        <div>
-                          <p className="text-sm font-medium text-gray-900">{movimiento.producto_nombre}</p>
-                          <p className="text-xs text-gray-500">{movimiento.codigo_producto}</p>
-                          <p className="text-xs text-gray-400">{movimiento.disciplina}</p>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium ${getColorTipo(movimiento.tipo)}`}>
-                          {getIconoTipo(movimiento.tipo)}
-                          {movimiento.tipo}
+                      <td className="px-4 py-2 whitespace-nowrap">
+                        <span
+                          className={`px-2 py-1 text-xs font-medium rounded-full ${
+                            mov.tipo === 'CONSUMO'
+                              ? 'bg-red-100 text-red-800'
+                              : mov.tipo === 'RECEPCION'
+                              ? 'bg-green-100 text-green-800'
+                              : mov.tipo === 'RECEPCION_SUMINISTROS'
+                              ? 'bg-purple-100 text-purple-800'
+                              : mov.tipo === 'AJUSTE'
+                              ? 'bg-amber-100 text-amber-800'
+                              : 'bg-gray-100 text-gray-800'
+                          }`}
+                        >
+                          {mov.tipo}
                         </span>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {movimiento.numero_lote || 'N/A'}
+                      <td className="px-4 py-2 text-sm text-gray-900">{mov.producto}</td>
+                      <td className="px-4 py-2 text-sm font-medium text-gray-900">{mov.cantidad}</td>
+                      <td className="px-4 py-2 text-sm text-gray-700">{mov.stockAnterior}</td>
+                      <td className="px-4 py-2 text-sm text-gray-700">{mov.stockNuevo}</td>
+                      <td className="px-4 py-2 text-sm text-gray-700">{mov.proveedor}</td>
+                      <td className="px-4 py-2 text-sm text-gray-700">{mov.lote || '-'}</td>
+                      <td className="px-4 py-2 text-sm text-gray-700">
+                        {mov.factura && <div>Fact: {mov.factura}</div>}
+                        {mov.ordenCompra && <div>OC: {mov.ordenCompra}</div>}
+                        {!mov.factura && !mov.ordenCompra && '-'}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className={`text-sm font-bold ${movimiento.tipo === 'RECEPCION' ? 'text-green-600' : 'text-red-600'}`}>
-                          {movimiento.tipo === 'RECEPCION' ? '+' : movimiento.tipo === 'CONSUMO' ? '-' : ''}
-                          {movimiento.cantidad} {movimiento.unidad}
-                        </div>
+                      <td className="px-4 py-2 text-sm text-gray-700">{mov.pruebasPorCaja || '-'}</td>
+                      <td className="px-4 py-2 text-sm text-gray-600 max-w-xs truncate" title={mov.observaciones}>
+                        {mov.observaciones || '-'}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        <div className="flex items-center gap-2">
-                          <span className="text-gray-500">{movimiento.stock_anterior}</span>
-                          <span className="text-gray-400">→</span>
-                          <span className="font-bold">{movimiento.stock_nuevo}</span>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {movimiento.usuario}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm">
-                        <button
-                          onClick={() => toggleDetalles(movimiento.id)}
-                          className="text-blue-600 hover:text-blue-800 flex items-center gap-1"
-                        >
-                          {detallesExpandidos[movimiento.id] ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                          {detallesExpandidos[movimiento.id] ? 'Ocultar' : 'Ver'}
-                        </button>
+                      <td className="px-4 py-2 text-sm text-gray-700">{mov.usuario}</td>
+                      <td className="px-4 py-2 text-sm text-gray-700">
+                        {mov.detalles ? (
+                          <div className="relative group">
+                            <Info className="w-4 h-4 text-blue-500 cursor-help" />
+                            <div className="absolute left-0 bottom-full mb-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded p-2 w-64 z-10">
+                              {mov.detalles.desglose && (
+                                <div className="mb-1">
+                                  <span className="font-bold">Desglose:</span> PX:{mov.detalles.desglose.px} Ctrl:{mov.detalles.desglose.control} Cal:{mov.detalles.desglose.calibrador} Merma:{mov.detalles.desglose.merma}
+                                </div>
+                              )}
+                              {mov.detalles.responsableCierre && (
+                                <div><span className="font-bold">Cierra:</span> {mov.detalles.responsableCierre}</div>
+                              )}
+                              {mov.detalles.responsableApertura && (
+                                <div><span className="font-bold">Abre:</span> {mov.detalles.responsableApertura}</div>
+                              )}
+                              {mov.detalles.loteCerrado && (
+                                <div><span className="font-bold">Lote cerrado:</span> {mov.detalles.loteCerrado}</div>
+                              )}
+                              {mov.detalles.observacionesLote && (
+                                <div><span className="font-bold">Obs lote:</span> {mov.detalles.observacionesLote}</div>
+                              )}
+                              {mov.detalles.fechaVencimiento && (
+                                <div><span className="font-bold">Vence:</span> {mov.detalles.fechaVencimiento}</div>
+                              )}
+                            </div>
+                          </div>
+                        ) : (
+                          '-'
+                        )}
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-
-            {/* Paginación */}
-            {totalPaginas > 1 && (
-              <div className="px-6 py-4 border-t flex items-center justify-between">
-                <div className="flex-1 flex justify-between sm:hidden">
-                  <button
-                    onClick={() => setPaginaActual(prev => Math.max(1, prev - 1))}
-                    disabled={paginaActual === 1}
-                    className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-                  >
-                    Anterior
-                  </button>
-                  <button
-                    onClick={() => setPaginaActual(prev => Math.min(totalPaginas, prev + 1))}
-                    disabled={paginaActual === totalPaginas}
-                    className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-                  >
-                    Siguiente
-                  </button>
-                </div>
-                <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
-                  <div>
-                    <p className="text-sm text-gray-700">
-                      Página <span className="font-medium">{paginaActual}</span> de{' '}
-                      <span className="font-medium">{totalPaginas}</span>
-                    </p>
-                  </div>
-                  <div>
-                    <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px">
-                      {[...Array(totalPaginas)].map((_, i) => (
-                        <button
-                          key={i + 1}
-                          onClick={() => setPaginaActual(i + 1)}
-                          className={`relative inline-flex items-center px-4 py-2 border text-sm font-medium ${
-                            paginaActual === i + 1
-                              ? 'z-10 bg-blue-50 border-blue-500 text-blue-600'
-                              : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'
-                          }`}
-                        >
-                          {i + 1}
-                        </button>
-                      ))}
-                    </nav>
-                  </div>
-                </div>
-              </div>
-            )}
-          </>
-        )}
+          )}
+        </div>
       </div>
     </div>
-   );
-  } //
+  );
+}
